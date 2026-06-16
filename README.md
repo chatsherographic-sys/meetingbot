@@ -355,6 +355,12 @@ Behavior:
 
 If something breaks, switch to `debug`, reproduce the issue, inspect the logs, then switch back to `production_minimal`.
 
+Manual verification:
+
+- In `production_minimal`, normal `/webhooks` and `/transcripts` entries are suppressed, but transcript extraction and trigger matching still run.
+- A real matched trigger should still create a `/matched-triggers` log and increment trigger usage.
+- In `debug`, `/webhooks`, `/transcripts`, and `/matched-triggers` should all save as usual.
+
 ## Meeting Sessions
 
 Meeting Sessions group these records by meeting instead of keeping everything global:

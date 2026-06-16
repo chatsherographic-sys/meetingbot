@@ -9,6 +9,7 @@ import {
 import {
   isStoreCorruptionError,
   findSessionIdForRecallBotId,
+  getAppSettings,
   processTranscriptWebhook,
   saveWebhookDebugLog,
 } from "@/lib/store";
@@ -21,6 +22,7 @@ export async function POST(request: Request) {
   let botId: string | null = null;
   let sessionId: string | null = null;
   let extractedTranscriptText: string | null = null;
+  let shouldPersistNormalWebhookLogs = false;
 
   try {
     rawPayload = rawBody ? (JSON.parse(rawBody) as unknown) : {};
@@ -28,6 +30,8 @@ export async function POST(request: Request) {
     botId = extractWebhookBotId(rawPayload);
     sessionId = await findSessionIdForRecallBotId(botId);
     extractedTranscriptText = extractTranscriptTextFromWebhook(rawPayload);
+    shouldPersistNormalWebhookLogs =
+      (await getAppSettings()).storageLoggingMode === "debug";
 
     if (isTranscriptProcessingEvent(eventName)) {
       await processTranscriptWebhook({
@@ -37,45 +41,54 @@ export async function POST(request: Request) {
         sourceEvent: eventName,
       });
 
-      await saveWebhookDebugLog({
-        sessionId: sessionId ?? "default-session",
-        eventName,
-        rawPayload,
-        receivedAt,
-        botId,
-        status: "processed",
-        extractedTranscriptText,
-        errorMessage: null,
-      });
+      // Storage / Logging Mode should only affect what gets persisted.
+      // Transcript extraction, trigger matching, cooldowns, dedupe, and chat send
+      // behavior must still run for transcript events in production_minimal mode.
+      if (shouldPersistNormalWebhookLogs) {
+        await saveWebhookDebugLog({
+          sessionId: sessionId ?? "default-session",
+          eventName,
+          rawPayload,
+          receivedAt,
+          botId,
+          status: "processed",
+          extractedTranscriptText,
+          errorMessage: null,
+        });
+      }
 
       return NextResponse.json({ ok: true, status: "processed" });
     }
 
     if (ignoredWebhookEvents.has(eventName)) {
+      if (shouldPersistNormalWebhookLogs) {
+        await saveWebhookDebugLog({
+          sessionId: sessionId ?? "default-session",
+          eventName,
+          rawPayload,
+          receivedAt,
+          botId,
+          status: "ignored",
+          extractedTranscriptText,
+          errorMessage: null,
+        });
+      }
+
+      return NextResponse.json({ ok: true, status: "ignored" });
+    }
+
+    if (shouldPersistNormalWebhookLogs) {
       await saveWebhookDebugLog({
         sessionId: sessionId ?? "default-session",
         eventName,
         rawPayload,
         receivedAt,
         botId,
-        status: "ignored",
+        status: "unknown",
         extractedTranscriptText,
         errorMessage: null,
       });
-
-      return NextResponse.json({ ok: true, status: "ignored" });
     }
-
-    await saveWebhookDebugLog({
-      sessionId: sessionId ?? "default-session",
-      eventName,
-      rawPayload,
-      receivedAt,
-      botId,
-      status: "unknown",
-      extractedTranscriptText,
-      errorMessage: null,
-    });
 
     return NextResponse.json({ ok: true, status: "unknown" });
   } catch (error) {
