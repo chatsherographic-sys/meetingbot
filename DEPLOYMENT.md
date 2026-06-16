@@ -39,6 +39,7 @@ RECALL_API_KEY=
 RECALL_REGION=us-west-2
 RECALL_SEND_CHAT_ENABLED=false
 PUBLIC_WEBHOOK_BASE_URL=https://your-vercel-domain.vercel.app
+VERCEL_AUTOMATION_BYPASS_SECRET=
 ```
 
 Important notes:
@@ -48,6 +49,8 @@ Important notes:
 - `NEXT_PUBLIC_SUPABASE_URL` is safe for the browser, but the service role key is not.
 - `RECALL_API_KEY` must stay server-side only.
 - After the first deployment, update `PUBLIC_WEBHOOK_BASE_URL` if the final Vercel URL changes.
+- If Vercel Authentication stays enabled, set `VERCEL_AUTOMATION_BYPASS_SECRET` so Recall can reach the protected webhook endpoint.
+- If the bypass secret changes, redeploy and create a new bot because existing bots keep the old webhook URL.
 
 ## Supabase Export And Verification
 

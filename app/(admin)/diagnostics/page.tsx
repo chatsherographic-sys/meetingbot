@@ -1,5 +1,8 @@
 import { unstable_noStore as noStore } from "next/cache";
-import { getRecallWebhookUrl } from "@/lib/recall";
+import {
+  getRecallWebhookUrl,
+  isVercelAutomationBypassConfigured,
+} from "@/lib/recall";
 import { getLogs, getStorageHealth } from "@/lib/store";
 import { getStorageDriver } from "@/lib/storage/config";
 
@@ -21,6 +24,7 @@ export default async function DiagnosticsPage() {
   const publicWebhookBaseUrl =
     process.env.PUBLIC_WEBHOOK_BASE_URL?.trim() || "http://localhost:3000";
   const recallApiKeyConfigured = Boolean(process.env.RECALL_API_KEY?.trim());
+  const vercelAutomationBypassConfigured = isVercelAutomationBypassConfigured();
   const isProductionRuntime =
     process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
   const usesLocalhostWebhookBaseUrl =
@@ -141,6 +145,14 @@ export default async function DiagnosticsPage() {
               <span className="setting-label">Recall API key configured</span>
               <span className="setting-value">
                 {formatBooleanLabel(recallApiKeyConfigured)}
+              </span>
+            </div>
+            <div className="setting-item">
+              <span className="setting-label">
+                VERCEL_AUTOMATION_BYPASS_SECRET configured
+              </span>
+              <span className="setting-value">
+                {formatBooleanLabel(vercelAutomationBypassConfigured)}
               </span>
             </div>
           </div>

@@ -12,6 +12,10 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
 }
 
+function getVercelAutomationBypassSecret(): string {
+  return process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() ?? "";
+}
+
 function isLocalWebhookBaseUrl(baseUrl: string): boolean {
   return /localhost|127\.0\.0\.1|::1/i.test(baseUrl);
 }
@@ -175,7 +179,7 @@ export function getRecallPreflight(): {
     recallRegionConfigured: Boolean(recallRegion),
     publicWebhookBaseUrlConfigured: Boolean(publicWebhookBaseUrl),
     publicWebhookBaseUrl: normalizedBaseUrl,
-    webhookUrl: `${normalizedBaseUrl}/api/recall/webhook`,
+    webhookUrl: getRecallWebhookUrl(),
     errors,
     warnings,
   };
@@ -187,16 +191,41 @@ export function getPublicWebhookBaseUrl(): string {
   );
 }
 
+function buildRecallWebhookUrl(maskAutomationBypassSecret: boolean): string {
+  const webhookUrl = new URL(`${getPublicWebhookBaseUrl()}/api/recall/webhook`);
+  const bypassSecret = getVercelAutomationBypassSecret();
+
+  if (bypassSecret) {
+    webhookUrl.searchParams.set(
+      "x-vercel-protection-bypass",
+      maskAutomationBypassSecret ? "***masked***" : bypassSecret,
+    );
+  }
+
+  return webhookUrl.toString();
+}
+
+export function isVercelAutomationBypassConfigured(): boolean {
+  return Boolean(getVercelAutomationBypassSecret());
+}
+
 export function getRecallWebhookUrl(): string {
-  return `${getPublicWebhookBaseUrl()}/api/recall/webhook`;
+  return buildRecallWebhookUrl(true);
+}
+
+export function getRecallWebhookUrlForRecall(): string {
+  return buildRecallWebhookUrl(false);
 }
 
 export function buildCreateRecallBotPayload(input: {
   meetingUrl: string;
   botName: string;
   transcriptLanguage: string;
+  maskAutomationBypassSecret?: boolean;
 }): Record<string, unknown> {
-  const webhookUrl = getRecallWebhookUrl();
+  const webhookUrl = input.maskAutomationBypassSecret
+    ? getRecallWebhookUrl()
+    : getRecallWebhookUrlForRecall();
 
   return {
     meeting_url: input.meetingUrl,

@@ -149,6 +149,7 @@ export async function POST(request: Request) {
         meetingUrl,
         botName: botNames[0],
         transcriptLanguage,
+        maskAutomationBypassSecret: true,
       });
       const rawRecallResponse = await createRecallBot({
         meetingUrl,
@@ -179,6 +180,7 @@ export async function POST(request: Request) {
           meetingUrl,
           botName,
           transcriptLanguage,
+          maskAutomationBypassSecret: true,
         });
         const rawRecallResponse = await createRecallBot({
           meetingUrl,

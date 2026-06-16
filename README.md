@@ -60,6 +60,7 @@ RECALL_API_KEY=your_recall_api_key
 RECALL_REGION=us-west-2
 RECALL_SEND_CHAT_ENABLED=false
 PUBLIC_WEBHOOK_BASE_URL=http://localhost:3000
+VERCEL_AUTOMATION_BYPASS_SECRET=
 NEXT_PUBLIC_SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
@@ -72,6 +73,7 @@ Notes:
 - `RECALL_API_KEY` is server-side only and is never exposed to the frontend.
 - `RECALL_SEND_CHAT_ENABLED=false` keeps the app in dry-run mode.
 - `PUBLIC_WEBHOOK_BASE_URL` is used for the webhook preview and bot creation payload.
+- `VERCEL_AUTOMATION_BYPASS_SECRET` is optional and appends the Vercel protection bypass query parameter for Recall webhook delivery.
 - `NEXT_PUBLIC_SUPABASE_URL` is required only for the Supabase storage driver.
 - `SUPABASE_SERVICE_ROLE_KEY` is server-side only and is required only for the Supabase storage driver.
 - local storage writes are serialized through a process-level queue
@@ -210,6 +212,7 @@ Vercel note:
 - warning when `STORAGE_DRIVER=local` is used in production or on Vercel
 - warning when `PUBLIC_WEBHOOK_BASE_URL` points to localhost
 - warning when `RECALL_SEND_CHAT_ENABLED=true`
+- whether `VERCEL_AUTOMATION_BYPASS_SECRET` is configured
 - `PUBLIC_WEBHOOK_BASE_URL`
 - full webhook URL
 - `RECALL_REGION`
@@ -605,6 +608,13 @@ The request body includes:
 - join chat message
 - Deepgram streaming transcript config
 - webhook realtime endpoint for `transcript.data`
+
+If `VERCEL_AUTOMATION_BYPASS_SECRET` is configured:
+
+- the real webhook URL sent to Recall includes `?x-vercel-protection-bypass=<secret>`
+- the saved payload shown in the app masks that value as `***masked***`
+- the secret is never shown in the UI or stored in visible bot payload history
+- if the bypass secret changes, redeploy and create a new bot because existing bots keep their old webhook URL
 
 ### Bulk creation
 
@@ -1091,6 +1101,7 @@ RECALL_API_KEY=
 RECALL_REGION=us-west-2
 RECALL_SEND_CHAT_ENABLED=false
 PUBLIC_WEBHOOK_BASE_URL=https://your-vercel-domain.vercel.app
+VERCEL_AUTOMATION_BYPASS_SECRET=
 ```
 
 5. Run `supabase/migrations/001_initial_schema.sql` on the target Supabase project.
@@ -1106,6 +1117,7 @@ Deployment notes:
 - never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code
 - `PUBLIC_WEBHOOK_BASE_URL` must be the real deployed HTTPS domain
 - start with `RECALL_SEND_CHAT_ENABLED=false` and test dry-run mode first
+- if Vercel Authentication stays enabled, set `VERCEL_AUTOMATION_BYPASS_SECRET` so Recall can still reach `/api/recall/webhook`
 
 ## Manual Local Webhook Test
 
