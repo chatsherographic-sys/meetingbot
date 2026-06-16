@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createScheduledBotJoin, listScheduledBotJoins } from "@/lib/store";
+import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 
 function parsePositiveInteger(value: string | null): number | undefined {
   if (!value) {
@@ -37,7 +38,6 @@ export async function POST(request: Request) {
       scheduledAt?: string;
       botCount?: number | string;
       botNames?: string[];
-      transcriptLanguage?: string;
       enabled?: boolean;
     };
 
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       scheduledAt: body.scheduledAt ?? "",
       botCount: Number(body.botCount ?? 1),
       botNames: Array.isArray(body.botNames) ? body.botNames : [],
-      transcriptLanguage: body.transcriptLanguage ?? "zh-CN",
+      transcriptLanguage: FIXED_TRANSCRIPT_LANGUAGE,
       enabled: body.enabled ?? true,
     });
 

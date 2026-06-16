@@ -600,7 +600,7 @@ export function TriggersPageClient() {
         <p className={`message ${ruleMessage.type}`}>{ruleMessage.text}</p>
       ) : null}
 
-      <div className="page-grid">
+      <div className="form-shell">
         <section className="card">
           <div className="card-header">
             <h3>Create Trigger Rule</h3>
@@ -610,17 +610,6 @@ export function TriggersPageClient() {
             </p>
           </div>
           <div className="card-body">
-            <div className="code-block">
-              <p className="code">
-                Current session: {currentSession?.name ?? "(not selected)"}
-              </p>
-              <p className="code">
-                Current session status: {currentSession?.status ?? "(unknown)"}
-              </p>
-              <p className="code">
-                Current session Zoom URL: {currentSession?.zoomUrl || "(empty)"}
-              </p>
-            </div>
             <form className="form" onSubmit={handleTriggerRuleSubmit}>
               <div className="field">
                 <label htmlFor="triggerPhrase">Trigger phrase</label>
@@ -654,41 +643,43 @@ export function TriggersPageClient() {
                 />
               </div>
 
-              <div className="field">
-                <label htmlFor="cooldownSeconds">Cooldown seconds</label>
-                <input
-                  id="cooldownSeconds"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={ruleForm.cooldownSeconds}
-                  onChange={(event) =>
-                    setRuleForm((current) => ({
-                      ...current,
-                      cooldownSeconds: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </div>
+              <div className="field-grid-2">
+                <div className="field">
+                  <label htmlFor="cooldownSeconds">Cooldown seconds</label>
+                  <input
+                    id="cooldownSeconds"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={ruleForm.cooldownSeconds}
+                    onChange={(event) =>
+                      setRuleForm((current) => ({
+                        ...current,
+                        cooldownSeconds: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
 
-              <div className="field">
-                <label htmlFor="responseDelaySeconds">Response Delay Seconds</label>
-                <input
-                  id="responseDelaySeconds"
-                  type="number"
-                  min="0"
-                  max="300"
-                  step="1"
-                  value={ruleForm.responseDelaySeconds}
-                  onChange={(event) =>
-                    setRuleForm((current) => ({
-                      ...current,
-                      responseDelaySeconds: event.target.value,
-                    }))
-                  }
-                  required
-                />
+                <div className="field">
+                  <label htmlFor="responseDelaySeconds">Response Delay Seconds</label>
+                  <input
+                    id="responseDelaySeconds"
+                    type="number"
+                    min="0"
+                    max="300"
+                    step="1"
+                    value={ruleForm.responseDelaySeconds}
+                    onChange={(event) =>
+                      setRuleForm((current) => ({
+                        ...current,
+                        responseDelaySeconds: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
               </div>
 
               <div className="field">
@@ -737,7 +728,54 @@ export function TriggersPageClient() {
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <div className="side-stack">
+          <section className="card">
+            <div className="card-header">
+              <h3>Current Session</h3>
+              <p>Triggers only match transcripts from bots in this session.</p>
+            </div>
+            <div className="card-body">
+              <div className="editor-context">
+                <div className="setting-item">
+                  <span className="setting-label">Session Name</span>
+                  <span className="setting-value">
+                    {currentSession?.name ?? "(not selected)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Session Status</span>
+                  <span className="setting-value">
+                    {currentSession?.status ?? "(unknown)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Active Bots</span>
+                  <span className="setting-value">{activeBots.length}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h3>Sender Mode Help</h3>
+            </div>
+            <div className="card-body">
+              <ul className="helper-list">
+                <li>Round-robin uses all active bots and rotates one sender at a time.</li>
+                <li>Specific bots sends from the selected active bots only.</li>
+                <li>All bots sends the same reply once from every active bot.</li>
+              </ul>
+              {activeBots.length === 0 ? (
+                <p className="message warning">
+                  No active bots are available right now. Rules can still be saved.
+                </p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+
+        <section className="card form-shell-span">
           <div className="card-header">
             <h3>Trigger Rules</h3>
             <p>

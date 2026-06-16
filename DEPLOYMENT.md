@@ -51,6 +51,7 @@ Important notes:
 - After the first deployment, update `PUBLIC_WEBHOOK_BASE_URL` if the final Vercel URL changes.
 - If Vercel Authentication stays enabled, set `VERCEL_AUTOMATION_BYPASS_SECRET` so Recall can reach the protected webhook endpoint.
 - If the bypass secret changes, redeploy and create a new bot because existing bots keep the old webhook URL.
+- Bot transcript language is currently locked to `Chinese (zh-CN)` for new manual and scheduled bot creation.
 
 ## Supabase Export And Verification
 

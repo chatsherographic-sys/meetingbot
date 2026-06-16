@@ -14,6 +14,7 @@ import {
 import { createStorageAdapter } from "@/lib/storage";
 import { getStorageDriver } from "@/lib/storage/config";
 import { getSessionOperationBlockedMessage, isSessionActiveForOperations } from "@/lib/session-operations";
+import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import type {
   MeetingSession,
   MeetingSessionStatus,
@@ -1312,7 +1313,7 @@ function ensureScheduledBotJoinInput(input: {
   enabled: boolean;
 } {
   const name = input.name.trim();
-  const transcriptLanguage = input.transcriptLanguage.trim() || "zh-CN";
+  const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
 
   if (!name) {
     throw new Error("Schedule name is required.");

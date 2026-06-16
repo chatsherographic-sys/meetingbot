@@ -11,6 +11,7 @@ import {
 import { useMeetingSession } from "@/components/meeting-session-context";
 import { isBotActiveStatus } from "@/lib/bot-status";
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
+import { FIXED_TRANSCRIPT_LANGUAGE_LABEL } from "@/lib/transcript-language";
 import type { RecallBotRecord } from "@/lib/types";
 
 type BotsPageClientProps = {
@@ -712,7 +713,7 @@ export function BotsPageClient({
       {error ? <p className="message error">{error}</p> : null}
       {botMessage ? <p className={`message ${botMessage.type}`}>{botMessage.text}</p> : null}
 
-      <div className="page-grid">
+      <div className="form-shell">
         <section className="card">
           <div className="card-header">
             <h3>Create Recall Bot</h3>
@@ -723,78 +724,38 @@ export function BotsPageClient({
           </div>
           <div className="card-body">
             <form className="form" onSubmit={handleCreateBotSubmit}>
-              <div className="code-block">
-                <p className="code">
-                  Current session: {currentSession?.name ?? "(not selected)"}
-                </p>
-                <p className="code">
-                  Current session status: {currentSession?.status ?? "(unknown)"}
-                </p>
-                <p className="code">
-                  Current session Zoom URL: {currentSession?.zoomUrl || "(empty)"}
-                </p>
-              </div>
-
-              {currentSessionBlockedMessage ? (
-                <p className="message error">{currentSessionBlockedMessage}</p>
-              ) : null}
-              {!currentSessionHasZoomUrl ? (
-                <p className="message error">
-                  Current session has no Zoom URL. Please edit the session and add a
-                  Zoom URL before creating bots.
-                </p>
-              ) : null}
-              {preflightErrors.length > 0 ? (
-                <div className="warning-list">
-                  {preflightErrors.map((warning) => (
-                    <p className="message error" key={warning}>
-                      {warning}
-                    </p>
-                  ))}
+              <div className="field-grid-2">
+                <div className="field">
+                  <label htmlFor="botCount">Number of Bots</label>
+                  <input
+                    id="botCount"
+                    type="number"
+                    min="1"
+                    max="20"
+                    step="1"
+                    value={botForm.botCount}
+                    onChange={(event) =>
+                      setBotForm((current) => ({
+                        ...current,
+                        botCount: event.target.value,
+                      }))
+                    }
+                    required
+                  />
                 </div>
-              ) : null}
-              {preflightWarnings.length > 0 ? (
-                <div className="warning-list">
-                  {preflightWarnings.map((warning) => (
-                    <p className="message warning" key={warning}>
-                      {warning}
-                    </p>
-                  ))}
+                <div className="field">
+                  <label htmlFor="transcriptLanguageLocked">
+                    Transcript Language
+                  </label>
+                  <input
+                    id="transcriptLanguageLocked"
+                    value={FIXED_TRANSCRIPT_LANGUAGE_LABEL}
+                    readOnly
+                  />
+                  <p className="helper-text">
+                    New bots are locked to Chinese transcription for now.
+                  </p>
                 </div>
-              ) : null}
-
-              <div className="field">
-                <label htmlFor="botCount">Number of Bots</label>
-                <input
-                  id="botCount"
-                  type="number"
-                  min="1"
-                  max="20"
-                  step="1"
-                  value={botForm.botCount}
-                  onChange={(event) =>
-                    setBotForm((current) => ({
-                      ...current,
-                      botCount: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="transcriptLanguage">Transcript Language</label>
-                <input
-                  id="transcriptLanguage"
-                  value={botForm.transcriptLanguage}
-                  onChange={(event) =>
-                    setBotForm((current) => ({
-                      ...current,
-                      transcriptLanguage: event.target.value,
-                    }))
-                  }
-                  required
-                />
               </div>
 
               {Number(botForm.botCount) <= 1 ? (
@@ -933,7 +894,86 @@ export function BotsPageClient({
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <div className="side-stack">
+          <section className="card">
+            <div className="card-header">
+              <h3>Current Session</h3>
+              <p>Bot creation always uses the sidebar-selected session.</p>
+            </div>
+            <div className="card-body">
+              <div className="editor-context">
+                <div className="setting-item">
+                  <span className="setting-label">Session Name</span>
+                  <span className="setting-value">
+                    {currentSession?.name ?? "(not selected)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Session Status</span>
+                  <span className="setting-value">
+                    {currentSession?.status ?? "(unknown)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Session Zoom URL</span>
+                  <span className="setting-value">
+                    {currentSession?.zoomUrl || "(empty)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Webhook URL Preview</span>
+                  <span className="setting-value">{webhookUrl}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h3>Preflight</h3>
+              <p>Check these items before creating bots for a live meeting.</p>
+            </div>
+            <div className="card-body">
+              {currentSessionBlockedMessage ? (
+                <p className="message error">{currentSessionBlockedMessage}</p>
+              ) : null}
+              {!currentSessionHasZoomUrl ? (
+                <p className="message error">
+                  Current session has no Zoom URL. Please edit the session and add a
+                  Zoom URL before creating bots.
+                </p>
+              ) : null}
+              {preflightErrors.length > 0 ? (
+                <div className="warning-list">
+                  {preflightErrors.map((warning) => (
+                    <p className="message error" key={warning}>
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              {preflightWarnings.length > 0 ? (
+                <div className="warning-list">
+                  {preflightWarnings.map((warning) => (
+                    <p className="message warning" key={warning}>
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              {preflightErrors.length === 0 &&
+              preflightWarnings.length === 0 &&
+              currentSessionHasZoomUrl &&
+              !currentSessionBlockedMessage ? (
+                <p className="message success">
+                  Bot creation is ready for the current session.
+                </p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+
+        <section className="card form-shell-span">
           <div className="card-header">
             <h3>Created Bots</h3>
             <p>Saved locally after each create, refresh, or stop action.</p>

@@ -258,7 +258,7 @@ export function LiveChatPageClient() {
       ) : null}
       {message ? <p className={`message ${message.type}`}>{message.text}</p> : null}
 
-      <div className="page-grid">
+      <div className="form-shell">
         <section className="card">
           <div className="card-header">
             <h3>Send Live Chat</h3>
@@ -266,17 +266,6 @@ export function LiveChatPageClient() {
           </div>
           <div className="card-body">
             <div className="form">
-              <div className="code-block">
-                <p className="code">
-                  Current session: {currentSession?.name ?? "(not selected)"}
-                </p>
-                <p className="code">
-                  Current session status: {currentSession?.status ?? "(unknown)"}
-                </p>
-                <p className="code">
-                  Current session Zoom URL: {currentSession?.zoomUrl || "(empty)"}
-                </p>
-              </div>
               <div className="field">
                 <label htmlFor="live-chat-message">Message</label>
                 <textarea
@@ -403,7 +392,54 @@ export function LiveChatPageClient() {
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <div className="side-stack">
+          <section className="card">
+            <div className="card-header">
+              <h3>Current Session</h3>
+              <p>Live chat sends only through active bots in this session.</p>
+            </div>
+            <div className="card-body">
+              <div className="editor-context">
+                <div className="setting-item">
+                  <span className="setting-label">Session Name</span>
+                  <span className="setting-value">
+                    {currentSession?.name ?? "(not selected)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Session Status</span>
+                  <span className="setting-value">
+                    {currentSession?.status ?? "(unknown)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Active Bots</span>
+                  <span className="setting-value">{activeBots.length}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h3>Sender Notes</h3>
+            </div>
+            <div className="card-body">
+              <ul className="helper-list">
+                <li>Round-robin sends from one active bot at a time.</li>
+                <li>Specific bots requires at least one selected active bot.</li>
+                <li>All bots sends the message once from every active bot.</li>
+              </ul>
+              {activeBots.length === 0 ? (
+                <p className="message warning">
+                  No active bots are available yet. Live chat will wait until bots are active.
+                </p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+
+        <section className="card form-shell-span">
           <div className="card-header">
             <div className="section-row">
               <div>

@@ -161,6 +161,7 @@ Vercel note:
 - create one bot or many bots
 - custom bot names for bulk creation
 - scoped to current session
+- transcript language is locked to `Chinese (zh-CN)` for new bots
 - uses the global sidebar `Current Session`
 - current session name, status, and Zoom URL shown read-only
 - bot creation is disabled if the current session has no Zoom URL
@@ -194,7 +195,7 @@ Vercel note:
 - current session name, status, and Zoom URL shown read-only
 - scheduled date and time
 - number of bots and bot names
-- transcript language
+- transcript language is locked to `Chinese (zh-CN)` for new schedules
 - show created bot IDs after a run
 - show schedule errors when failed
 - automatic due-schedule checks every 10 seconds while the page is open
@@ -550,6 +551,7 @@ Bot creation rules:
 - `/bots` always sends the current sidebar `sessionId`
 - the backend looks up `session.zoomUrl` and uses it as `meeting_url`
 - the backend does not trust a frontend `meeting_url`
+- transcript language is fixed to `zh-CN` even if the browser submits a different value
 - if the current session has no Zoom URL, bot creation is rejected
 - if the current session is not `active`, bot creation is rejected
 - if Recall environment variables are missing, bot creation is rejected before sending the Recall API request
@@ -574,6 +576,7 @@ Rules:
 
 - new schedules always use the current sidebar session
 - the schedule uses its saved `sessionId` and that session's Zoom URL when it runs
+- new scheduled joins are locked to `zh-CN` transcription
 - schedule creation is blocked if no current session is selected
 - schedule creation is blocked if the current sidebar session has no Zoom URL
 - schedule creation is blocked if the current sidebar session is ended or archived

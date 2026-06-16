@@ -1,3 +1,5 @@
+import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
+
 function getRequiredEnvVar(name: "RECALL_API_KEY" | "RECALL_REGION"): string {
   const value = process.env[name]?.trim();
 
@@ -226,6 +228,7 @@ export function buildCreateRecallBotPayload(input: {
   const webhookUrl = input.maskAutomationBypassSecret
     ? getRecallWebhookUrl()
     : getRecallWebhookUrlForRecall();
+  const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
 
   return {
     meeting_url: input.meetingUrl,
@@ -241,7 +244,7 @@ export function buildCreateRecallBotPayload(input: {
         provider: {
           deepgram_streaming: {
             model: "nova-3",
-            language: input.transcriptLanguage,
+            language: transcriptLanguage,
           },
         },
         diarization: {

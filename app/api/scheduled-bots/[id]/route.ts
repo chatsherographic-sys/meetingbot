@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteScheduledBotJoin, updateScheduledBotJoin } from "@/lib/store";
+import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import type { ScheduledBotJoinStatus } from "@/lib/types";
 
 type RouteContext = {
@@ -29,7 +30,10 @@ export async function PATCH(request: Request, context: RouteContext) {
       botCount:
         body.botCount === undefined ? undefined : Number(body.botCount),
       botNames: Array.isArray(body.botNames) ? body.botNames : undefined,
-      transcriptLanguage: body.transcriptLanguage,
+      transcriptLanguage:
+        body.transcriptLanguage === undefined
+          ? undefined
+          : FIXED_TRANSCRIPT_LANGUAGE,
       enabled: body.enabled,
       status: body.status,
     });

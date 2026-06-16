@@ -6,10 +6,10 @@ import {
 } from "@/lib/recall";
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
 import { getMeetingSessionById, saveRecallBotRecord } from "@/lib/store";
+import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import type { RecallBotRecord } from "@/lib/types";
 
 const DEFAULT_BOT_NAME = "ChatsHero AI Assistant";
-const DEFAULT_TRANSCRIPT_LANGUAGE = "zh-CN";
 const MIN_BOT_COUNT = 1;
 const MAX_BOT_COUNT = 20;
 
@@ -98,7 +98,6 @@ export async function POST(request: Request) {
       botName?: string;
       botNamePrefix?: string;
       botNames?: string[];
-      transcriptLanguage?: string;
       botCount?: number | string;
     };
 
@@ -138,9 +137,7 @@ export async function POST(request: Request) {
     const botNamePrefix =
       (body.botNamePrefix ?? body.botName ?? DEFAULT_BOT_NAME).trim() ||
       DEFAULT_BOT_NAME;
-    const transcriptLanguage =
-      (body.transcriptLanguage ?? DEFAULT_TRANSCRIPT_LANGUAGE).trim() ||
-      DEFAULT_TRANSCRIPT_LANGUAGE;
+    const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
     const botCount = ensureValidBotCount(body.botCount);
     const botNames = ensureValidBotNames(body.botNames, botNamePrefix, botCount);
 

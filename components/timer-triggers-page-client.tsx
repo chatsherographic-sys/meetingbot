@@ -82,6 +82,14 @@ export function TimerTriggersPageClient() {
     () => recallBots.filter((bot) => isBotActiveStatus(bot.status)),
     [recallBots],
   );
+  const earliestJoinedAt = useMemo(() => {
+    const joinedAtValues = activeBots
+      .map((bot) => bot.joinedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => new Date(left).getTime() - new Date(right).getTime());
+
+    return joinedAtValues[0] ?? null;
+  }, [activeBots]);
   const currentSessionBlockedMessage = getSessionOperationBlockedMessage(
     currentSession?.status,
   );
@@ -716,7 +724,7 @@ export function TimerTriggersPageClient() {
         </p>
       ) : null}
 
-      <div className="page-grid">
+      <div className="form-shell">
         <section className="card">
           <div className="card-header">
             <h3>Create Timer Trigger</h3>
@@ -726,17 +734,6 @@ export function TimerTriggersPageClient() {
             </p>
           </div>
           <div className="card-body">
-            <div className="code-block">
-              <p className="code">
-                Current session: {currentSession?.name ?? "(not selected)"}
-              </p>
-              <p className="code">
-                Current session status: {currentSession?.status ?? "(unknown)"}
-              </p>
-              <p className="code">
-                Current session Zoom URL: {currentSession?.zoomUrl || "(empty)"}
-              </p>
-            </div>
             <form className="form" onSubmit={handleCreateTimerTrigger}>
               <div className="field">
                 <label htmlFor="timer-trigger-name">Name</label>
@@ -753,27 +750,49 @@ export function TimerTriggersPageClient() {
                   required
                 />
               </div>
-              <div className="field">
-                <label htmlFor="timer-trigger-delay">Delay minutes after join</label>
-                <input
-                  id="timer-trigger-delay"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={timerTriggerForm.delayMinutesAfterJoin}
-                  onChange={(event) =>
-                    setTimerTriggerForm((current) => ({
-                      ...current,
-                      delayMinutesAfterJoin: event.target.value,
-                    }))
-                  }
-                  required
-                />
-                <p className="muted">
-                  Timer delay is calculated from the earliest active bot
-                  joinedAt. If the scheduled time has already passed, it will
-                  run on the next auto-run check.
-                </p>
+              <div className="field-grid-2">
+                <div className="field">
+                  <label htmlFor="timer-trigger-delay">Delay minutes after join</label>
+                  <input
+                    id="timer-trigger-delay"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={timerTriggerForm.delayMinutesAfterJoin}
+                    onChange={(event) =>
+                      setTimerTriggerForm((current) => ({
+                        ...current,
+                        delayMinutesAfterJoin: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                  <p className="muted">
+                    Timer delay is calculated from the earliest active bot
+                    joinedAt. If the scheduled time has already passed, it will
+                    run on the next auto-run check.
+                  </p>
+                </div>
+                <div className="field">
+                  <label htmlFor="timer-trigger-response-delay">
+                    Response delay seconds
+                  </label>
+                  <input
+                    id="timer-trigger-response-delay"
+                    type="number"
+                    min="0"
+                    max="300"
+                    step="1"
+                    value={timerTriggerForm.responseDelaySeconds}
+                    onChange={(event) =>
+                      setTimerTriggerForm((current) => ({
+                        ...current,
+                        responseDelaySeconds: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
               </div>
               <div className="field">
                 <label htmlFor="timer-trigger-message">Message</label>
@@ -792,27 +811,6 @@ export function TimerTriggersPageClient() {
               </div>
 
               {renderSenderSelector(timerTriggerForm, setTimerTriggerForm, "create")}
-
-              <div className="field">
-                <label htmlFor="timer-trigger-response-delay">
-                  Response delay seconds
-                </label>
-                <input
-                  id="timer-trigger-response-delay"
-                  type="number"
-                  min="0"
-                  max="300"
-                  step="1"
-                  value={timerTriggerForm.responseDelaySeconds}
-                  onChange={(event) =>
-                    setTimerTriggerForm((current) => ({
-                      ...current,
-                      responseDelaySeconds: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </div>
               <div className="field">
                 <label htmlFor="timer-trigger-max-count">Max trigger count</label>
                 <input
@@ -846,7 +844,56 @@ export function TimerTriggersPageClient() {
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <div className="side-stack">
+          <section className="card">
+            <div className="card-header">
+              <h3>Current Session</h3>
+              <p>Timer triggers use only active bots from this session.</p>
+            </div>
+            <div className="card-body">
+              <div className="editor-context">
+                <div className="setting-item">
+                  <span className="setting-label">Session Name</span>
+                  <span className="setting-value">
+                    {currentSession?.name ?? "(not selected)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Session Status</span>
+                  <span className="setting-value">
+                    {currentSession?.status ?? "(unknown)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Earliest Active Bot joinedAt</span>
+                  <span className="setting-value">
+                    {earliestJoinedAt ? formatTime(earliestJoinedAt) : "Not available"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h3>Timer Notes</h3>
+            </div>
+            <div className="card-body">
+              <ul className="helper-list">
+                <li>Overdue timers run on the next auto-run cycle while this page is open.</li>
+                <li>Specific-bots timers with no assigned bots wait silently until bots are assigned.</li>
+                <li>Production should move due-timer checks into cron or a worker.</li>
+              </ul>
+              {activeBots.length === 0 ? (
+                <p className="message warning">
+                  No active bots are available yet. Timers can still be created now.
+                </p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+
+        <section className="card form-shell-span">
           <div className="card-header">
             <div className="section-row">
               <div>
@@ -1141,7 +1188,7 @@ export function TimerTriggersPageClient() {
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <section className="card form-shell-span">
           <div className="card-header">
             <div className="section-row">
               <div>

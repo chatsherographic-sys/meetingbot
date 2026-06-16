@@ -15,6 +15,7 @@ import {
 } from "@/components/control-panel-client";
 import { useMeetingSession } from "@/components/meeting-session-context";
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
+import { FIXED_TRANSCRIPT_LANGUAGE_LABEL } from "@/lib/transcript-language";
 import type { ScheduledBotJoin } from "@/lib/types";
 
 type ScheduledBotJoinFormState = {
@@ -595,56 +596,13 @@ export function ScheduledBotsPageClient({
       {error ? <p className="message error">{error}</p> : null}
       {message ? <p className={`message ${message.type}`}>{message.text}</p> : null}
 
-      <div className="page-grid">
+      <div className="form-shell">
         <section className="card">
           <div className="card-header">
             <h3>Create Scheduled Bot Join</h3>
             <p>Schedule bots to be created automatically at a specific date and time.</p>
           </div>
           <div className="card-body">
-            <div className="code-block">
-              <p className="code">
-                Current session: {currentSession?.name ?? "(not selected)"}
-              </p>
-              <p className="code">
-                Current session status: {currentSession?.status ?? "(unknown)"}
-              </p>
-              <p className="code">
-                Current session Zoom URL: {currentSession?.zoomUrl || "(empty)"}
-              </p>
-            </div>
-            {!hasCurrentSession && !sessionLoading ? (
-              <p className="message error">
-                Please select a session from the navigation bar first.
-              </p>
-            ) : null}
-            {currentSessionBlockedMessage ? (
-              <p className="message error">{currentSessionBlockedMessage}</p>
-            ) : null}
-            {!currentSessionHasZoomUrl && hasCurrentSession ? (
-              <p className="message error">
-                Current session has no Zoom URL. Please add Zoom URL before
-                scheduling bots.
-              </p>
-            ) : null}
-            {preflightErrors.length > 0 ? (
-              <div className="warning-list">
-                {preflightErrors.map((warning) => (
-                  <p className="message error" key={warning}>
-                    {warning}
-                  </p>
-                ))}
-              </div>
-            ) : null}
-            {preflightWarnings.length > 0 ? (
-              <div className="warning-list">
-                {preflightWarnings.map((warning) => (
-                  <p className="message warning" key={warning}>
-                    {warning}
-                  </p>
-                ))}
-              </div>
-            ) : null}
             <form className="form" onSubmit={handleCreateScheduledBotJoin}>
               <div className="field">
                 <label htmlFor="scheduled-bot-name">Name</label>
@@ -660,53 +618,55 @@ export function ScheduledBotsPageClient({
                   required
                 />
               </div>
-              <div className="field">
-                <label htmlFor="scheduled-bot-date">Scheduled date</label>
-                <input
-                  id="scheduled-bot-date"
-                  type="date"
-                  value={scheduleForm.scheduledDate}
-                  onChange={(event) =>
-                    setScheduleForm((current) => ({
-                      ...current,
-                      scheduledDate: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="scheduled-bot-time">Scheduled time</label>
-                <input
-                  id="scheduled-bot-time"
-                  type="time"
-                  value={scheduleForm.scheduledTime}
-                  onChange={(event) =>
-                    setScheduleForm((current) => ({
-                      ...current,
-                      scheduledTime: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="scheduled-bot-count">Number of bots</label>
-                <input
-                  id="scheduled-bot-count"
-                  type="number"
-                  min="1"
-                  max="20"
-                  step="1"
-                  value={scheduleForm.botCount}
-                  onChange={(event) =>
-                    setScheduleForm((current) => ({
-                      ...current,
-                      botCount: event.target.value,
-                    }))
-                  }
-                  required
-                />
+              <div className="field-grid-3">
+                <div className="field">
+                  <label htmlFor="scheduled-bot-date">Scheduled date</label>
+                  <input
+                    id="scheduled-bot-date"
+                    type="date"
+                    value={scheduleForm.scheduledDate}
+                    onChange={(event) =>
+                      setScheduleForm((current) => ({
+                        ...current,
+                        scheduledDate: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="scheduled-bot-time">Scheduled time</label>
+                  <input
+                    id="scheduled-bot-time"
+                    type="time"
+                    value={scheduleForm.scheduledTime}
+                    onChange={(event) =>
+                      setScheduleForm((current) => ({
+                        ...current,
+                        scheduledTime: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="scheduled-bot-count">Number of bots</label>
+                  <input
+                    id="scheduled-bot-count"
+                    type="number"
+                    min="1"
+                    max="20"
+                    step="1"
+                    value={scheduleForm.botCount}
+                    onChange={(event) =>
+                      setScheduleForm((current) => ({
+                        ...current,
+                        botCount: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
               </div>
               {renderBotNamesEditor(
                 scheduleForm,
@@ -717,15 +677,12 @@ export function ScheduledBotsPageClient({
                 <label htmlFor="scheduled-bot-language">Transcript language</label>
                 <input
                   id="scheduled-bot-language"
-                  value={scheduleForm.transcriptLanguage}
-                  onChange={(event) =>
-                    setScheduleForm((current) => ({
-                      ...current,
-                      transcriptLanguage: event.target.value,
-                    }))
-                  }
-                  required
+                  value={FIXED_TRANSCRIPT_LANGUAGE_LABEL}
+                  readOnly
                 />
+                <p className="helper-text">
+                  New scheduled joins always create bots with Chinese transcription.
+                </p>
               </div>
               <label className="choice-item">
                 <input
@@ -760,7 +717,84 @@ export function ScheduledBotsPageClient({
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <div className="side-stack">
+          <section className="card">
+            <div className="card-header">
+              <h3>Current Session</h3>
+              <p>Scheduled joins always use the sidebar-selected session.</p>
+            </div>
+            <div className="card-body">
+              <div className="editor-context">
+                <div className="setting-item">
+                  <span className="setting-label">Session Name</span>
+                  <span className="setting-value">
+                    {currentSession?.name ?? "(not selected)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Session Status</span>
+                  <span className="setting-value">
+                    {currentSession?.status ?? "(unknown)"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Session Zoom URL</span>
+                  <span className="setting-value">
+                    {currentSession?.zoomUrl || "(empty)"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h3>Schedule Notes</h3>
+              <p>Local MVP only auto-runs while this page stays open.</p>
+            </div>
+            <div className="card-body">
+              {!hasCurrentSession && !sessionLoading ? (
+                <p className="message error">
+                  Please select a session from the navigation bar first.
+                </p>
+              ) : null}
+              {currentSessionBlockedMessage ? (
+                <p className="message error">{currentSessionBlockedMessage}</p>
+              ) : null}
+              {!currentSessionHasZoomUrl && hasCurrentSession ? (
+                <p className="message error">
+                  Current session has no Zoom URL. Please add Zoom URL before
+                  scheduling bots.
+                </p>
+              ) : null}
+              {preflightErrors.length > 0 ? (
+                <div className="warning-list">
+                  {preflightErrors.map((warning) => (
+                    <p className="message error" key={warning}>
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              {preflightWarnings.length > 0 ? (
+                <div className="warning-list">
+                  {preflightWarnings.map((warning) => (
+                    <p className="message warning" key={warning}>
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              <ul className="helper-list">
+                <li>Scheduled joins use the session Zoom URL automatically.</li>
+                <li>If a schedule becomes due while this page is open, it runs on the next 10 second check.</li>
+                <li>Production should replace page-open auto-run with cron or a worker.</li>
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <section className="card form-shell-span">
           <div className="card-header">
             <div className="section-row">
               <div>
@@ -796,7 +830,7 @@ export function ScheduledBotsPageClient({
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <section className="card form-shell-span">
           <div className="card-header">
             <h3>Scheduled Bot Joins</h3>
             <p>Manage scheduled bot creation jobs and review their results.</p>
@@ -926,13 +960,8 @@ export function ScheduledBotsPageClient({
                             </label>
                             <input
                               id={`edit-scheduled-language-${schedule.id}`}
-                              value={editingScheduleForm.transcriptLanguage}
-                              onChange={(event) =>
-                                setEditingScheduleForm((current) => ({
-                                  ...current,
-                                  transcriptLanguage: event.target.value,
-                                }))
-                              }
+                              value={FIXED_TRANSCRIPT_LANGUAGE_LABEL}
+                              readOnly
                             />
                           </div>
                           <label className="choice-item">

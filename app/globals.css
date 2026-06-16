@@ -19,6 +19,7 @@
 html,
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
   background:
     radial-gradient(circle at top right, rgba(15, 108, 189, 0.12), transparent 28%),
@@ -28,6 +29,8 @@ body {
 }
 
 body {
+  height: 100vh;
+  overflow: hidden;
   padding: 24px;
 }
 
@@ -47,9 +50,11 @@ textarea {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
   max-width: 1440px;
   margin: 0 auto;
+  height: calc(100vh - 48px);
+  overflow: hidden;
 }
 
 .sidebar,
@@ -63,8 +68,14 @@ textarea {
 
 .sidebar {
   position: sticky;
-  top: 24px;
+  top: 0;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .sidebar-brand h1 {
@@ -86,7 +97,8 @@ textarea {
 .sidebar-nav {
   display: grid;
   gap: 8px;
-  margin-top: 24px;
+  margin-top: 8px;
+  padding-bottom: 6px;
 }
 
 .nav-link {
@@ -114,11 +126,16 @@ textarea {
 
 .content-shell {
   min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
 }
 
 .page-stack {
   display: grid;
   gap: 20px;
+  padding-bottom: 24px;
 }
 
 .page-header {
@@ -137,12 +154,67 @@ textarea {
 .page-grid {
   display: grid;
   gap: 20px;
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.85fr);
   align-items: start;
 }
 
 .page-grid-span {
   grid-column: span 2;
+}
+
+.form-shell {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.85fr);
+  align-items: start;
+}
+
+.form-shell-span {
+  grid-column: 1 / -1;
+}
+
+.side-stack {
+  display: grid;
+  gap: 20px;
+  align-self: start;
+}
+
+.field-grid-2,
+.field-grid-3 {
+  display: grid;
+  gap: 14px;
+}
+
+.field-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.editor-context {
+  display: grid;
+  gap: 14px;
+}
+
+.editor-context .setting-item {
+  padding: 12px 14px;
+}
+
+.helper-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.helper-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .card-header {
@@ -406,6 +478,10 @@ textarea {
   color: var(--success);
 }
 
+.message.warning {
+  color: var(--warn);
+}
+
 .rule-list,
 .log-list {
   display: grid;
@@ -578,16 +654,31 @@ textarea {
 }
 
 @media (max-width: 1100px) {
+  body {
+    height: auto;
+    overflow: auto;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
     position: static;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar-nav {
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .content-shell {
+    height: auto;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .page-grid {
@@ -595,6 +686,14 @@ textarea {
   }
 
   .page-grid-span {
+    grid-column: auto;
+  }
+
+  .form-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .form-shell-span {
     grid-column: auto;
   }
 }
@@ -611,6 +710,11 @@ textarea {
   }
 
   .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .field-grid-2,
+  .field-grid-3 {
     grid-template-columns: 1fr;
   }
 }

@@ -262,7 +262,7 @@ export function SessionsPageClient() {
 
       {message ? <p className={`message ${message.type}`}>{message.text}</p> : null}
 
-      <div className="page-grid">
+      <div className="form-shell">
         <section className="card">
           <div className="card-header">
             <h3>Create Session</h3>
@@ -273,36 +273,38 @@ export function SessionsPageClient() {
           </div>
           <div className="card-body">
             <form className="form" onSubmit={handleCreateSession}>
-              <div className="field">
-                <label htmlFor="session-name">Session Name</label>
-                <input
-                  id="session-name"
-                  value={formState.name}
-                  onChange={(event) =>
-                    setFormState((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="session-zoom-url">Zoom URL</label>
-                <input
-                  id="session-zoom-url"
-                  value={formState.zoomUrl}
-                  onChange={(event) =>
-                    setFormState((current) => ({
-                      ...current,
-                      zoomUrl: event.target.value,
-                    }))
-                  }
-                  placeholder="https://zoom.us/j/..."
-                />
-                <p className="helper-text">
-                  This Zoom URL is what the bot creation form will use.
-                </p>
+              <div className="field-grid-2">
+                <div className="field">
+                  <label htmlFor="session-name">Session Name</label>
+                  <input
+                    id="session-name"
+                    value={formState.name}
+                    onChange={(event) =>
+                      setFormState((current) => ({
+                        ...current,
+                        name: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="session-zoom-url">Zoom URL</label>
+                  <input
+                    id="session-zoom-url"
+                    value={formState.zoomUrl}
+                    onChange={(event) =>
+                      setFormState((current) => ({
+                        ...current,
+                        zoomUrl: event.target.value,
+                      }))
+                    }
+                    placeholder="https://zoom.us/j/..."
+                  />
+                  <p className="helper-text">
+                    This Zoom URL is what the bot creation form will use.
+                  </p>
+                </div>
               </div>
               <div className="field">
                 <label htmlFor="session-notes">Notes</label>
@@ -326,7 +328,48 @@ export function SessionsPageClient() {
           </div>
         </section>
 
-        <section className="card page-grid-span">
+        <div className="side-stack">
+          <section className="card">
+            <div className="card-header">
+              <h3>Current Session Context</h3>
+              <p>The sidebar Current Session controls the other admin pages.</p>
+            </div>
+            <div className="card-body">
+              <div className="editor-context">
+                <div className="setting-item">
+                  <span className="setting-label">Current Session</span>
+                  <span className="setting-value">
+                    {meetingSessions.find((session) => session.id === currentSessionId)
+                      ?.name ?? "Default Session"}
+                  </span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Sessions Saved</span>
+                  <span className="setting-value">{meetingSessions.length}</span>
+                </div>
+                <div className="setting-item">
+                  <span className="setting-label">Active Sessions</span>
+                  <span className="setting-value">{activeSessionIds.size}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h3>Session Tips</h3>
+            </div>
+            <div className="card-body">
+              <ul className="helper-list">
+                <li>Set the Zoom URL here before creating bots or scheduled joins.</li>
+                <li>Start the session when you are ready to create or schedule bots.</li>
+                <li>End Session will stop active bots and cancel pending schedules.</li>
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <section className="card form-shell-span">
           <div className="card-header">
             <h3>Sessions List</h3>
             <p>Current Session drives what the other admin pages show.</p>
