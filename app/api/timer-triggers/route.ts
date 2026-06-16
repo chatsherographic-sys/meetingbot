@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createTimerTrigger, listTimerTriggers } from "@/lib/store";
+import { clearTimerTriggers, createTimerTrigger, listTimerTriggers } from "@/lib/store";
 import type { TimerTriggerSenderMode } from "@/lib/types";
 
 function parsePositiveInteger(value: string | null): number | undefined {
@@ -68,6 +68,28 @@ export async function POST(request: Request) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to create timer trigger.";
+
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const sessionId = searchParams.get("sessionId")?.trim() ?? "";
+
+    if (!sessionId) {
+      throw new Error("Session ID is required.");
+    }
+
+    const removedCount = await clearTimerTriggers(sessionId);
+
+    return NextResponse.json({ ok: true, removedCount });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to delete timer trigger rules.";
 
     return NextResponse.json({ error: message }, { status: 400 });
   }

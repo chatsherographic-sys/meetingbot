@@ -1661,6 +1661,22 @@ export async function deleteTriggerRule(id: string): Promise<void> {
   });
 }
 
+export async function clearTriggerRules(sessionId: string): Promise<number> {
+  if (!sessionId.trim()) {
+    throw new Error("Session ID is required.");
+  }
+
+  return mutateStore(async (store) => {
+    const normalizedSessionId = normalizeSessionIdInput(sessionId);
+    const initialCount = store.triggerRules.length;
+    store.triggerRules = store.triggerRules.filter(
+      (rule) => rule.sessionId !== normalizedSessionId,
+    );
+
+    return initialCount - store.triggerRules.length;
+  });
+}
+
 export async function getLogs(sessionId?: string): Promise<{
   transcriptLogs: TranscriptLog[];
   matchLogs: MatchLog[];
@@ -2451,6 +2467,22 @@ export async function deleteTimerTrigger(id: string): Promise<void> {
     if (store.timerTriggers.length === initialCount) {
       throw new Error("Timer trigger not found.");
     }
+  });
+}
+
+export async function clearTimerTriggers(sessionId: string): Promise<number> {
+  if (!sessionId.trim()) {
+    throw new Error("Session ID is required.");
+  }
+
+  return mutateStore(async (store) => {
+    const normalizedSessionId = normalizeSessionIdInput(sessionId);
+    const initialCount = store.timerTriggers.length;
+    store.timerTriggers = store.timerTriggers.filter(
+      (trigger) => trigger.sessionId !== normalizedSessionId,
+    );
+
+    return initialCount - store.timerTriggers.length;
   });
 }
 

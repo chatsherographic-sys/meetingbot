@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createTriggerRule, listTriggerRules } from "@/lib/store";
+import { clearTriggerRules, createTriggerRule, listTriggerRules } from "@/lib/store";
 import type { SenderMode } from "@/lib/types";
 
 function parsePositiveInteger(value: string | null): number | undefined {
@@ -75,6 +75,28 @@ export async function POST(request: Request) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to create trigger rule.";
+
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const sessionId = searchParams.get("sessionId")?.trim() ?? "";
+
+    if (!sessionId) {
+      throw new Error("Session ID is required.");
+    }
+
+    const removedCount = await clearTriggerRules(sessionId);
+
+    return NextResponse.json({ ok: true, removedCount });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to delete trigger rules.";
 
     return NextResponse.json({ error: message }, { status: 400 });
   }

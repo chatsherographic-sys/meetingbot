@@ -419,6 +419,56 @@ export function TriggersPageClient() {
     }
   }
 
+  async function handleDeleteAllRules() {
+    const confirmed = window.confirm(
+      "This will delete all trigger rules for the current session only. This cannot be undone.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setRuleSubmitting(true);
+    setRuleMessage(null);
+
+    try {
+      const response = await fetch(
+        `/api/trigger-rules${buildQueryString({ sessionId: currentSessionId })}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const payload = await readJsonResponse<{
+        error?: string;
+        removedCount?: number;
+      }>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to delete trigger rules.");
+      }
+
+      if (editingRuleId) {
+        setEditingRuleId(null);
+      }
+
+      setRuleMessage({
+        type: "success",
+        text: `Deleted ${payload.removedCount ?? 0} trigger rule(s) for the current session.`,
+      });
+      await loadRules();
+    } catch (deleteError) {
+      setRuleMessage({
+        type: "error",
+        text:
+          deleteError instanceof Error
+            ? deleteError.message
+            : "Failed to delete trigger rules.",
+      });
+    } finally {
+      setRuleSubmitting(false);
+    }
+  }
+
   function renderSenderBotSelector(
     formState: TriggerRuleFormState,
     setter: Dispatch<SetStateAction<TriggerRuleFormState>>,
@@ -777,11 +827,29 @@ export function TriggersPageClient() {
 
         <section className="card form-shell-span">
           <div className="card-header">
-            <h3>Trigger Rules</h3>
-            <p>
-              Existing duplicate rules still load so you can disable or delete
-              them manually.
-            </p>
+            <div className="section-row">
+              <div>
+                <h3>Trigger Rules</h3>
+                <p>
+                  Existing duplicate rules still load so you can disable or delete
+                  them manually.
+                </p>
+              </div>
+              <div className="actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={
+                    ruleSubmitting ||
+                    rules.length === 0 ||
+                    Boolean(currentSessionBlockedMessage)
+                  }
+                  onClick={() => void handleDeleteAllRules()}
+                >
+                  Delete All Trigger Rules
+                </button>
+              </div>
+            </div>
           </div>
           <div className="card-body">
             <div className="filters-grid">

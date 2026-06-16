@@ -423,6 +423,56 @@ export function TimerTriggersPageClient() {
     }
   }
 
+  async function handleDeleteAllTimerTriggers() {
+    const confirmed = window.confirm(
+      "This will delete all timer trigger rules for the current session only. This cannot be undone.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setTimerTriggerSubmitting(true);
+    setTimerTriggerMessage(null);
+
+    try {
+      const response = await fetch(
+        `/api/timer-triggers?sessionId=${encodeURIComponent(currentSessionId)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const payload = await readJsonResponse<{
+        error?: string;
+        removedCount?: number;
+      }>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to delete timer trigger rules.");
+      }
+
+      if (editingTimerTriggerId) {
+        setEditingTimerTriggerId(null);
+      }
+
+      setTimerTriggerMessage({
+        type: "success",
+        text: `Deleted ${payload.removedCount ?? 0} timer trigger rule(s) for the current session.`,
+      });
+      await loadTimerTriggerData();
+    } catch (deleteError) {
+      setTimerTriggerMessage({
+        type: "error",
+        text:
+          deleteError instanceof Error
+            ? deleteError.message
+            : "Failed to delete timer trigger rules.",
+      });
+    } finally {
+      setTimerTriggerSubmitting(false);
+    }
+  }
+
   async function handleDeleteTimerTriggerLog(logId: string) {
     setTimerTriggerMessage(null);
 
@@ -910,6 +960,18 @@ export function TimerTriggersPageClient() {
                   onClick={() => void loadTimerTriggerData()}
                 >
                   Refresh data
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={
+                    timerTriggerSubmitting ||
+                    timerTriggers.length === 0 ||
+                    Boolean(currentSessionBlockedMessage)
+                  }
+                  onClick={() => void handleDeleteAllTimerTriggers()}
+                >
+                  Delete All Timer Trigger Rules
                 </button>
               </div>
             </div>

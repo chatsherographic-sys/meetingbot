@@ -229,6 +229,7 @@ Vercel note:
 - edit trigger rule
 - enable or disable trigger rule
 - delete trigger rule
+- delete all trigger rules for the current session
 - search trigger phrase
 - search reply message
 - filter enabled or disabled
@@ -244,6 +245,7 @@ Vercel note:
 - edit timer trigger
 - enable or disable timer trigger
 - delete timer trigger
+- delete all timer trigger rules for the current session
 - timer sender modes: `round_robin_bots`, `specific_bots`, `all_bots`
 - automatic timer auto-run every 10 seconds while the page stays open
 - show last auto-run time
