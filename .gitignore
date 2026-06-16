@@ -1,0 +1,11 @@
+.next
+node_modules
+.env.local
+data/store.json
+.npm-cache
+.dev-server.err
+.dev-server.log
+
+# Local runtime data
+data/*.json
+!data/.gitkeep
