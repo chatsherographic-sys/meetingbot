@@ -1,19 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useMeetingSession } from "@/components/meeting-session-context";
 import {
+  formatTime,
   readJsonResponse,
   type PanelMessage,
 } from "@/components/control-panel-client";
-import type { StorageLoggingMode } from "@/lib/types";
+import type { StorageDriver } from "@/lib/storage/types";
+import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
+import { useState } from "react";
 
 type SettingsPageClientProps = {
-  fullWebhookUrl: string;
-  publicWebhookBaseUrl: string;
   recallApiKeyConfigured: boolean;
   recallRegion: string;
   sendChatEnabled: boolean;
-  storageLoggingMode: StorageLoggingMode;
+  storageDriver: StorageDriver;
+  storageOk: boolean;
+  storageCheckedAt: string;
+  storageError: string | null;
 };
 
 function formatBooleanLabel(value: boolean): string {
@@ -21,53 +25,18 @@ function formatBooleanLabel(value: boolean): string {
 }
 
 export function SettingsPageClient(props: SettingsPageClientProps) {
-  const [storageLoggingMode, setStorageLoggingMode] = useState<StorageLoggingMode>(
-    props.storageLoggingMode,
-  );
-  const [savingMode, setSavingMode] = useState(false);
+  const { currentSession } = useMeetingSession();
   const [runningCleanup, setRunningCleanup] = useState<string | null>(null);
   const [message, setMessage] = useState<PanelMessage>(null);
-
-  async function updateStorageMode(nextMode: StorageLoggingMode) {
-    setSavingMode(true);
-    setMessage(null);
-
-    try {
-      const response = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          storageLoggingMode: nextMode,
-        }),
-      });
-      const payload = await readJsonResponse<{
-        error?: string;
-        storageLoggingMode?: StorageLoggingMode;
-      }>(response);
-
-      if (!response.ok || !payload.storageLoggingMode) {
-        throw new Error(payload.error ?? "Failed to update storage mode.");
-      }
-
-      setStorageLoggingMode(payload.storageLoggingMode);
-      setMessage({
-        type: "success",
-        text: `Storage / Logging Mode updated to ${payload.storageLoggingMode}.`,
-      });
-    } catch (error) {
-      setMessage({
-        type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Failed to update storage mode.",
-      });
-    } finally {
-      setSavingMode(false);
-    }
-  }
+  const currentSessionBlockedMessage = getSessionOperationBlockedMessage(
+    currentSession?.status,
+  );
+  const supabaseConnectedLabel =
+    props.storageDriver === "supabase"
+      ? props.storageOk
+        ? "Connected"
+        : "Connection failed"
+      : "Local mode";
 
   async function runCleanupAction(config: {
     actionKey: string;
@@ -186,192 +155,155 @@ export function SettingsPageClient(props: SettingsPageClientProps) {
       <section className="page-header">
         <div>
           <p className="section-kicker">Settings</p>
-          <h2>Environment preview and storage controls</h2>
+          <h2>Live chat environment and safety controls</h2>
           <p className="muted">
-            These values are read on the server. The Recall API key is never
-            shown in the browser.
+            This page shows only the settings that matter for the simplified
+            live-chat workflow.
           </p>
         </div>
       </section>
 
       {message ? <p className={`message ${message.type}`}>{message.text}</p> : null}
 
-      <section className="card">
-        <div className="card-header">
-          <h3>Configuration</h3>
-          <p>Restart the dev server after changing `.env.local`.</p>
-        </div>
-        <div className="card-body">
-          <div className="settings-list">
-            <div className="setting-item">
-              <span className="setting-label">RECALL_REGION</span>
-              <span className="setting-value">{props.recallRegion}</span>
-            </div>
-            <div className="setting-item">
-              <span className="setting-label">RECALL_SEND_CHAT_ENABLED</span>
-              <span className="setting-value">
-                {props.sendChatEnabled ? "true" : "false"}
-              </span>
-            </div>
-            <div className="setting-item">
-              <span className="setting-label">PUBLIC_WEBHOOK_BASE_URL</span>
-              <span className="setting-value">{props.publicWebhookBaseUrl}</span>
-            </div>
-            <div className="setting-item">
-              <span className="setting-label">Full webhook URL</span>
-              <span className="setting-value">{props.fullWebhookUrl}</span>
-            </div>
-            <div className="setting-item">
-              <span className="setting-label">Recall API key configured</span>
-              <span className="setting-value">
-                {formatBooleanLabel(props.recallApiKeyConfigured)}
-              </span>
-            </div>
-            <div className="setting-item">
-              <span className="setting-label">Storage / Logging Mode</span>
-              <span className="setting-value">{storageLoggingMode}</span>
+      <div className="page-grid">
+        <section className="card">
+          <div className="card-header">
+            <h3>Recall Chat Status</h3>
+            <p>Server-side configuration used for bot chat sending.</p>
+          </div>
+          <div className="card-body">
+            <div className="settings-list">
+              <div className="setting-item">
+                <span className="setting-label">Recall Region</span>
+                <span className="setting-value">{props.recallRegion}</span>
+              </div>
+              <div className="setting-item">
+                <span className="setting-label">Send Chat Mode</span>
+                <span className="setting-value">
+                  {props.sendChatEnabled ? "Real send enabled" : "Dry-run mode"}
+                </span>
+              </div>
+              <div className="setting-item">
+                <span className="setting-label">Recall API key configured</span>
+                <span className="setting-value">
+                  {formatBooleanLabel(props.recallApiKeyConfigured)}
+                </span>
+              </div>
             </div>
           </div>
+        </section>
 
-          <div className="form" style={{ marginTop: 16 }}>
-            <div className="field">
-              <label htmlFor="storageLoggingMode">Storage / Logging Mode</label>
-              <select
-                id="storageLoggingMode"
-                value={storageLoggingMode}
-                disabled={savingMode}
-                onChange={(event) =>
-                  void updateStorageMode(
-                    event.target.value as StorageLoggingMode,
-                  )
-                }
-              >
-                <option value="production_minimal">production_minimal</option>
-                <option value="debug">debug</option>
-              </select>
-              <p className="muted">
-                `production_minimal` is recommended for live use and smaller
-                storage footprints. Turn on `debug` only when you need detailed
-                webhook or transcript troubleshooting.
+        <section className="card">
+          <div className="card-header">
+            <h3>Storage Status</h3>
+            <p>Supabase connectivity is checked server-side.</p>
+          </div>
+          <div className="card-body">
+            <div className="settings-list">
+              <div className="setting-item">
+                <span className="setting-label">Storage Driver</span>
+                <span className="setting-value">{props.storageDriver}</span>
+              </div>
+              <div className="setting-item">
+                <span className="setting-label">Supabase Connected</span>
+                <span className="setting-value">{supabaseConnectedLabel}</span>
+              </div>
+              <div className="setting-item">
+                <span className="setting-label">Last Checked</span>
+                <span className="setting-value">
+                  {formatTime(props.storageCheckedAt)}
+                </span>
+              </div>
+            </div>
+            {props.storageError ? (
+              <p className="message error" style={{ marginTop: 16 }}>
+                {props.storageError}
               </p>
-            </div>
+            ) : null}
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section className="card">
-        <div className="card-header">
-          <h3>Cleanup Actions</h3>
-          <p>These actions clear local history only. Recall keeps its own bot history.</p>
-        </div>
-        <div className="card-body">
-          <div className="result-block">
-            <h4>Safety Controls</h4>
-            <p className="muted">
-              Emergency stop is for safety only. It does not delete bot records or
-              logs.
-            </p>
+        <section className="card">
+          <div className="card-header">
+            <h3>Current Session</h3>
+            <p>The sidebar session selector controls bots, schedules, and live chat.</p>
+          </div>
+          <div className="card-body">
+            <div className="settings-list">
+              <div className="setting-item">
+                <span className="setting-label">Session Name</span>
+                <span className="setting-value">
+                  {currentSession?.name ?? "(not selected)"}
+                </span>
+              </div>
+              <div className="setting-item">
+                <span className="setting-label">Session Status</span>
+                <span className="setting-value">
+                  {currentSession?.status ?? "(unknown)"}
+                </span>
+              </div>
+              <div className="setting-item">
+                <span className="setting-label">Zoom URL</span>
+                <span className="setting-value">
+                  {currentSession?.zoomUrl?.trim() || "(not set)"}
+                </span>
+              </div>
+            </div>
+            {currentSessionBlockedMessage ? (
+              <p className="message warning" style={{ marginTop: 16 }}>
+                {currentSessionBlockedMessage}
+              </p>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-header">
+            <h3>Safety Controls</h3>
+            <p>These actions help clean up bot records or stop live bots quickly.</p>
+          </div>
+          <div className="card-body">
+            <div className="result-block">
+              <h4>Emergency Stop</h4>
+              <p className="muted">
+                Emergency stop attempts to remove every active bot across all
+                sessions. It does not delete records or logs.
+              </p>
+              <div className="actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={runningCleanup !== null}
+                  onClick={() => void handleEmergencyStopAllBots()}
+                >
+                  {runningCleanup === "emergency-stop-all-bots"
+                    ? "Working..."
+                    : "Emergency Stop All Active Bots"}
+                </button>
+              </div>
+            </div>
+
             <div className="actions">
               <button
                 className="button secondary"
                 type="button"
                 disabled={runningCleanup !== null}
-                onClick={() => void handleEmergencyStopAllBots()}
+                onClick={() =>
+                  void runCleanupAction({
+                    actionKey: "bot-history",
+                    confirmText:
+                      "Clear all bot history records? Active bot records will be kept.",
+                    endpoint: "/api/recall/bots/history",
+                    successText: "Bot history cleared.",
+                  })
+                }
               >
-                {runningCleanup === "emergency-stop-all-bots"
-                  ? "Working..."
-                  : "Emergency Stop All Active Bots"}
+                {runningCleanup === "bot-history" ? "Working..." : "Clear Bot History"}
               </button>
             </div>
           </div>
-          <div className="actions">
-            <button
-              className="button secondary"
-              type="button"
-              disabled={runningCleanup !== null}
-              onClick={() =>
-                void runCleanupAction({
-                  actionKey: "bot-history",
-                  confirmText:
-                    "Clear all bot history records? Active bot records will be kept.",
-                  endpoint: "/api/recall/bots/history",
-                  successText: "Bot history cleared.",
-                })
-              }
-            >
-              {runningCleanup === "bot-history" ? "Working..." : "Clear Bot History"}
-            </button>
-            <button
-              className="button secondary"
-              type="button"
-              disabled={runningCleanup !== null}
-              onClick={() =>
-                void runCleanupAction({
-                  actionKey: "transcript-logs",
-                  confirmText: "Clear all transcript logs?",
-                  endpoint: "/api/logs/transcript",
-                  successText: "Transcript logs cleared.",
-                })
-              }
-            >
-              {runningCleanup === "transcript-logs"
-                ? "Working..."
-                : "Clear Transcript Logs"}
-            </button>
-            <button
-              className="button secondary"
-              type="button"
-              disabled={runningCleanup !== null}
-              onClick={() =>
-                void runCleanupAction({
-                  actionKey: "webhook-debug-logs",
-                  confirmText: "Clear all webhook debug logs?",
-                  endpoint: "/api/logs/webhook-debug",
-                  successText: "Webhook debug logs cleared.",
-                })
-              }
-            >
-              {runningCleanup === "webhook-debug-logs"
-                ? "Working..."
-                : "Clear Webhook Debug Logs"}
-            </button>
-            <button
-              className="button secondary"
-              type="button"
-              disabled={runningCleanup !== null}
-              onClick={() =>
-                void runCleanupAction({
-                  actionKey: "matched-trigger-logs",
-                  confirmText: "Clear all matched trigger logs?",
-                  endpoint: "/api/logs/matched-trigger",
-                  successText: "Matched trigger logs cleared.",
-                })
-              }
-            >
-              {runningCleanup === "matched-trigger-logs"
-                ? "Working..."
-                : "Clear Matched Trigger Logs"}
-            </button>
-            <button
-              className="button secondary"
-              type="button"
-              disabled={runningCleanup !== null}
-              onClick={() =>
-                void runCleanupAction({
-                  actionKey: "timer-trigger-logs",
-                  confirmText: "Clear all timer trigger logs?",
-                  endpoint: "/api/logs/timer-trigger",
-                  successText: "Timer trigger logs cleared.",
-                })
-              }
-            >
-              {runningCleanup === "timer-trigger-logs"
-                ? "Working..."
-                : "Clear Timer Trigger Logs"}
-            </button>
-          </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

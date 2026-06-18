@@ -9,13 +9,7 @@ const navItems = [
   { href: "/sessions", label: "Sessions" },
   { href: "/bots", label: "Bots" },
   { href: "/scheduled-bots", label: "Scheduled Bots" },
-  { href: "/triggers", label: "Triggers" },
-  { href: "/timer-triggers", label: "Timer Triggers" },
   { href: "/live-chat", label: "Live Chat" },
-  { href: "/diagnostics", label: "Diagnostics" },
-  { href: "/webhooks", label: "Webhooks" },
-  { href: "/transcripts", label: "Transcripts" },
-  { href: "/matched-triggers", label: "Matched Triggers" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -30,8 +24,8 @@ export function AdminSidebar() {
         <p className="sidebar-kicker">Recall.ai MVP</p>
         <h1>Zoom Bot Control Panel</h1>
         <p className="muted">
-          Split views for bots, word triggers, timer triggers, webhook
-          debugging, and historical logs.
+          Create bots, schedule joins, and send live Zoom chat through saved
+          templates.
         </p>
       </div>
 

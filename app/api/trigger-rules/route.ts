@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { clearTriggerRules, createTriggerRule, listTriggerRules } from "@/lib/store";
-import type { SenderMode } from "@/lib/types";
+import type { SenderMode, TriggerSlotAliasGroup } from "@/lib/types";
 
 function parsePositiveInteger(value: string | null): number | undefined {
   if (!value) {
@@ -44,6 +44,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       sessionId?: string;
       triggerPhrase?: string;
+      slotAliasGroups?: TriggerSlotAliasGroup[];
       replyMessage?: string;
       cooldownSeconds?: number | string;
       responseDelaySeconds?: number | string;
@@ -55,6 +56,10 @@ export async function POST(request: Request) {
     const rule = await createTriggerRule({
       sessionId: body.sessionId ?? "",
       triggerPhrase: body.triggerPhrase ?? "",
+      aliases: [],
+      slotAliasGroups: Array.isArray(body.slotAliasGroups)
+        ? body.slotAliasGroups
+        : [],
       replyMessage: body.replyMessage ?? "",
       cooldownSeconds: Number(body.cooldownSeconds ?? 0),
       responseDelaySeconds: Number(body.responseDelaySeconds ?? 0),

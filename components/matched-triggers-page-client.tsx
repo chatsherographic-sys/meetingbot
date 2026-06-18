@@ -325,6 +325,7 @@ export function MatchedTriggersPageClient() {
                         Execution ID: {log.triggerExecutionId ?? "None"}
                       </span>
                       <span className="pill">Source event: {log.sourceEvent}</span>
+                      <span className="pill">Match type: {log.matchType}</span>
                       <span className="pill">
                         Source webhook bot: {log.sourceWebhookBotId ?? "Unknown"}
                       </span>

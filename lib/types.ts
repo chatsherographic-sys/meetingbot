@@ -50,11 +50,24 @@ export type TimerTriggerSenderMode =
   | "specific_bots"
   | "all_bots";
 
+export type TriggerSlotAliasGroup = {
+  source: string;
+  aliases: string[];
+};
+
+export type TriggerMatchType =
+  | "exact_trigger"
+  | "phrase_alias"
+  | "slot_alias";
+
 export type TriggerRule = {
   id: string;
   sessionId: string;
   triggerPhrase: string;
   normalizedTrigger: string;
+  aliases: string[];
+  normalizedAliases: string[];
+  slotAliasGroups: TriggerSlotAliasGroup[];
   replyMessage: string;
   cooldownSeconds: number;
   responseDelaySeconds: number;
@@ -117,6 +130,7 @@ export type MatchLog = {
   triggerExecutionId: string | null;
   sourceEvent: TranscriptLog["sourceEvent"];
   sourceWebhookBotId: string | null;
+  matchType: TriggerMatchType;
   ruleId: string;
   triggerPhrase: string;
   replyMessage: string;
@@ -223,6 +237,25 @@ export type LiveChatLog = {
   errorMessage: string | null;
 };
 
+export type LiveChatTemplateSenderMode =
+  | "selected_bots"
+  | "all_bots"
+  | "round_robin";
+
+export type LiveChatTemplate = {
+  id: string;
+  sessionId: string;
+  name: string;
+  message: string;
+  senderMode: LiveChatTemplateSenderMode;
+  botIds: string[];
+  roundRobinIndex: number;
+  lastSentBotId: string | null;
+  lastSentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type WebhookDebugLog = {
   id: string;
   sessionId: string;
@@ -245,6 +278,7 @@ export type StoreData = {
   recallBots: RecallBotRecord[];
   timerTriggers: TimerTrigger[];
   timerTriggerLogs: TimerTriggerLog[];
+  liveChatTemplates: LiveChatTemplate[];
   liveChatLogs: LiveChatLog[];
   liveChatRoundRobinIndex: number;
   webhookDebugLogs: WebhookDebugLog[];

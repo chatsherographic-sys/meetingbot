@@ -1,9 +1,23 @@
 "use client";
 
-import { Dispatch, FormEvent, SetStateAction, useEffect, useMemo, useState } from "react";
+import {
+  Dispatch,
+  FormEvent,
+  SetStateAction,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { isBotActiveStatus } from "@/lib/bot-status";
 import { normalizeTranscript } from "@/lib/normalize";
-import type { RecallBotRecord, SenderMode, TriggerRule } from "@/lib/types";
+import { normalizeSlotAliasGroups } from "@/lib/trigger-aliases";
+import type {
+  RecallBotRecord,
+  SenderMode,
+  TriggerRule,
+  TriggerSlotAliasGroup,
+} from "@/lib/types";
 import {
   buildQueryString,
   formatTime,
@@ -15,6 +29,7 @@ import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
 
 type TriggerRuleFormState = {
   triggerPhrase: string;
+  slotAliasGroups: TriggerSlotAliasGroup[];
   replyMessage: string;
   cooldownSeconds: string;
   responseDelaySeconds: string;
@@ -35,8 +50,17 @@ type RoundRobinPreview = {
   message: string | null;
 };
 
+function getAliasSuggestionSuccessText(slotGroupCount: number): string {
+  if (slotGroupCount > 0) {
+    return `Loaded ${slotGroupCount} slot alias group(s). Review and save when ready.`;
+  }
+
+  return "No slot alias groups were suggested for the current trigger phrase.";
+}
+
 const initialRuleForm: TriggerRuleFormState = {
   triggerPhrase: "",
+  slotAliasGroups: [],
   replyMessage: "",
   cooldownSeconds: "30",
   responseDelaySeconds: "0",
@@ -53,6 +77,8 @@ export function TriggersPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ruleSubmitting, setRuleSubmitting] = useState(false);
+  const [aliasSuggestionLoadingTargets, setAliasSuggestionLoadingTargets] =
+    useState<Record<string, boolean>>({});
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [ruleMessage, setRuleMessage] = useState<PanelMessage>(null);
   const [triggerSearch, setTriggerSearch] = useState("");
@@ -61,6 +87,11 @@ export function TriggersPageClient() {
   const [ruleForm, setRuleForm] = useState<TriggerRuleFormState>(initialRuleForm);
   const [editingRuleForm, setEditingRuleForm] =
     useState<TriggerRuleFormState>(initialRuleForm);
+  const latestNormalizedTriggerRef = useRef<Record<string, string>>({
+    create: "",
+  });
+  const latestAliasRequestIdRef = useRef(0);
+  const latestAliasRequestByTargetRef = useRef<Record<string, number>>({});
 
   const activeBots = useMemo(
     () => recallBots.filter((bot) => isBotActiveStatus(bot.status)),
@@ -137,9 +168,13 @@ export function TriggersPageClient() {
   }, [triggerSearch, replySearch, statusFilter, currentSessionId]);
 
   function startEditingRule(rule: TriggerRule) {
+    latestNormalizedTriggerRef.current[rule.id] = normalizeTranscript(
+      rule.triggerPhrase,
+    );
     setEditingRuleId(rule.id);
     setEditingRuleForm({
       triggerPhrase: rule.triggerPhrase,
+      slotAliasGroups: rule.slotAliasGroups,
       replyMessage: rule.replyMessage,
       cooldownSeconds: String(rule.cooldownSeconds),
       responseDelaySeconds: String(rule.responseDelaySeconds),
@@ -151,6 +186,10 @@ export function TriggersPageClient() {
   }
 
   function cancelEditingRule() {
+    if (editingRuleId) {
+      delete latestNormalizedTriggerRef.current[editingRuleId];
+      delete latestAliasRequestByTargetRef.current[editingRuleId];
+    }
     setEditingRuleId(null);
     setRuleMessage(null);
   }
@@ -243,6 +282,134 @@ export function TriggersPageClient() {
     }));
   }
 
+  function updateTriggerPhraseState(
+    setter: Dispatch<SetStateAction<TriggerRuleFormState>>,
+    target: string,
+    nextTriggerPhrase: string,
+  ) {
+    setter((current) => {
+      const currentNormalizedTrigger = normalizeTranscript(current.triggerPhrase);
+      const nextNormalizedTrigger = normalizeTranscript(nextTriggerPhrase);
+      const triggerChanged = currentNormalizedTrigger !== nextNormalizedTrigger;
+      latestNormalizedTriggerRef.current[target] = nextNormalizedTrigger;
+
+      if (!triggerChanged) {
+        return {
+          ...current,
+          triggerPhrase: nextTriggerPhrase,
+        };
+      }
+
+      return {
+        ...current,
+        triggerPhrase: nextTriggerPhrase,
+        slotAliasGroups: [],
+      };
+    });
+  }
+
+  async function handleSuggestAliases(options: {
+    target: "create" | string;
+    triggerPhrase: string;
+    setter: Dispatch<SetStateAction<TriggerRuleFormState>>;
+  }) {
+    const trimmedTriggerPhrase = options.triggerPhrase.trim();
+    const requestedNormalizedTrigger = normalizeTranscript(trimmedTriggerPhrase);
+    const requestId = latestAliasRequestIdRef.current + 1;
+    latestAliasRequestIdRef.current = requestId;
+    latestAliasRequestByTargetRef.current[options.target] = requestId;
+
+    if (!trimmedTriggerPhrase) {
+      setRuleMessage({
+        type: "error",
+        text: "Enter a trigger phrase before requesting alias suggestions.",
+      });
+      return;
+    }
+
+    setAliasSuggestionLoadingTargets((current) => ({
+      ...current,
+      [options.target]: true,
+    }));
+    setRuleMessage(null);
+
+    try {
+      const response = await fetch("/api/trigger-rules/suggest-aliases", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          triggerPhrase: trimmedTriggerPhrase,
+        }),
+      });
+      const payload = await readJsonResponse<{
+        slotAliasGroups?: TriggerSlotAliasGroup[];
+        error?: string;
+      }>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to suggest aliases.");
+      }
+
+      if (
+        latestAliasRequestByTargetRef.current[options.target] !== requestId
+      ) {
+        return;
+      }
+
+      if (
+        latestNormalizedTriggerRef.current[options.target] !==
+        requestedNormalizedTrigger
+      ) {
+        setRuleMessage({
+          type: "error",
+          text: "Trigger phrase changed before alias suggestions returned. Please click Suggest Aliases again.",
+        });
+        return;
+      }
+
+      options.setter((current) => {
+        return {
+          ...current,
+          slotAliasGroups: normalizeSlotAliasGroups(
+            current.triggerPhrase,
+            Array.isArray(payload.slotAliasGroups) ? payload.slotAliasGroups : [],
+          ),
+        };
+      });
+      setRuleMessage({
+        type: "success",
+        text: getAliasSuggestionSuccessText(
+          Array.isArray(payload.slotAliasGroups)
+            ? payload.slotAliasGroups.length
+            : 0,
+        ),
+      });
+    } catch (error) {
+      if (
+        latestAliasRequestByTargetRef.current[options.target] !== requestId
+      ) {
+        return;
+      }
+
+      setRuleMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "Failed to suggest aliases.",
+      });
+    } finally {
+      if (latestAliasRequestByTargetRef.current[options.target] === requestId) {
+        setAliasSuggestionLoadingTargets((current) => ({
+          ...current,
+          [options.target]: false,
+        }));
+      }
+    }
+  }
+
   async function handleTriggerRuleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setRuleSubmitting(true);
@@ -257,6 +424,11 @@ export function TriggersPageClient() {
         body: JSON.stringify({
           sessionId: currentSessionId,
           triggerPhrase: ruleForm.triggerPhrase,
+          aliases: [],
+          slotAliasGroups: normalizeSlotAliasGroups(
+            ruleForm.triggerPhrase,
+            ruleForm.slotAliasGroups,
+          ),
           replyMessage: ruleForm.replyMessage,
           cooldownSeconds: Number(ruleForm.cooldownSeconds),
           responseDelaySeconds: Number(ruleForm.responseDelaySeconds),
@@ -306,6 +478,11 @@ export function TriggersPageClient() {
         },
         body: JSON.stringify({
           triggerPhrase: editingRuleForm.triggerPhrase,
+          aliases: [],
+          slotAliasGroups: normalizeSlotAliasGroups(
+            editingRuleForm.triggerPhrase,
+            editingRuleForm.slotAliasGroups,
+          ),
           replyMessage: editingRuleForm.replyMessage,
           cooldownSeconds: Number(editingRuleForm.cooldownSeconds),
           responseDelaySeconds: Number(editingRuleForm.responseDelaySeconds),
@@ -625,6 +802,15 @@ export function TriggersPageClient() {
     );
   }
 
+  const createSlotAliasGroupsPreview = normalizeSlotAliasGroups(
+    ruleForm.triggerPhrase,
+    ruleForm.slotAliasGroups,
+  );
+  const editingSlotAliasGroupsPreview = normalizeSlotAliasGroups(
+    editingRuleForm.triggerPhrase,
+    editingRuleForm.slotAliasGroups,
+  );
+
   return (
     <div className="page-stack">
       <section className="page-header">
@@ -667,14 +853,57 @@ export function TriggersPageClient() {
                   id="triggerPhrase"
                   value={ruleForm.triggerPhrase}
                   onChange={(event) =>
-                    setRuleForm((current) => ({
-                      ...current,
-                      triggerPhrase: event.target.value,
-                    }))
+                    updateTriggerPhraseState(
+                      setRuleForm,
+                      "create",
+                      event.target.value,
+                    )
                   }
                   placeholder="e.g. test123"
                   required
                 />
+              </div>
+
+              <div className="field">
+                <div className="section-row">
+                  <label>Slot Alias Groups</label>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={
+                      ruleSubmitting ||
+                      Boolean(aliasSuggestionLoadingTargets.create)
+                    }
+                    onClick={() =>
+                      void handleSuggestAliases({
+                        target: "create",
+                        triggerPhrase: ruleForm.triggerPhrase,
+                        setter: setRuleForm,
+                      })
+                    }
+                  >
+                    {aliasSuggestionLoadingTargets.create
+                      ? "Suggesting..."
+                      : "Suggest Aliases"}
+                  </button>
+                </div>
+                <p className="muted">
+                  Auto-generated Chinese ASR matching by position. When the
+                  trigger phrase changes, old slot alias groups are cleared and
+                  you should click Suggest Aliases again before saving.
+                </p>
+                <div className="code-block">
+                  <p className="code">Slot Alias Groups preview:</p>
+                  {createSlotAliasGroupsPreview.length > 0 ? (
+                    createSlotAliasGroupsPreview.map((group) => (
+                      <p className="code" key={`create-${group.source}`}>
+                        {group.source}: {group.aliases.join(", ")}
+                      </p>
+                    ))
+                  ) : (
+                    <p className="code">(none)</p>
+                  )}
+                </div>
               </div>
 
               <div className="field">
@@ -915,12 +1144,55 @@ export function TriggersPageClient() {
                               id={`edit-trigger-${rule.id}`}
                               value={editingRuleForm.triggerPhrase}
                               onChange={(event) =>
-                                setEditingRuleForm((current) => ({
-                                  ...current,
-                                  triggerPhrase: event.target.value,
-                                }))
+                                updateTriggerPhraseState(
+                                  setEditingRuleForm,
+                                  rule.id,
+                                  event.target.value,
+                                )
                               }
                             />
+                          </div>
+                          <div className="field">
+                            <div className="section-row">
+                              <label>Slot Alias Groups</label>
+                              <button
+                                className="button secondary"
+                                type="button"
+                                disabled={
+                                  ruleSubmitting ||
+                                  Boolean(aliasSuggestionLoadingTargets[rule.id])
+                                }
+                                onClick={() =>
+                                  void handleSuggestAliases({
+                                    target: rule.id,
+                                    triggerPhrase: editingRuleForm.triggerPhrase,
+                                    setter: setEditingRuleForm,
+                                  })
+                                }
+                              >
+                                {aliasSuggestionLoadingTargets[rule.id]
+                                  ? "Suggesting..."
+                                  : "Suggest Aliases"}
+                              </button>
+                            </div>
+                            <p className="muted">
+                              Auto-generated Chinese ASR matching by position.
+                              When the trigger phrase changes, old slot alias
+                              groups are cleared and you should click Suggest
+                              Aliases again before saving.
+                            </p>
+                            <div className="code-block">
+                              <p className="code">Slot Alias Groups preview:</p>
+                              {editingSlotAliasGroupsPreview.length > 0 ? (
+                                editingSlotAliasGroupsPreview.map((group) => (
+                                  <p className="code" key={`${rule.id}-${group.source}`}>
+                                    {group.source}: {group.aliases.join(", ")}
+                                  </p>
+                                ))
+                              ) : (
+                                <p className="code">(none)</p>
+                              )}
+                            </div>
                           </div>
                           <div className="field">
                             <label htmlFor={`edit-reply-${rule.id}`}>
@@ -1036,6 +1308,18 @@ export function TriggersPageClient() {
                         <>
                           <h3>{rule.triggerPhrase}</h3>
                           <p className="muted">Normalized: {rule.normalizedTrigger}</p>
+                          <div className="code-block">
+                            <p className="code">Slot Alias Groups preview:</p>
+                            {rule.slotAliasGroups.length > 0 ? (
+                              rule.slotAliasGroups.map((group) => (
+                                <p className="code" key={`${rule.id}-${group.source}`}>
+                                  {group.source}: {group.aliases.join(", ")}
+                                </p>
+                              ))
+                            ) : (
+                              <p className="code">(none)</p>
+                            )}
+                          </div>
                           <p className="muted">{rule.replyMessage}</p>
                           <div className="rule-meta">
                             <span className="pill">
@@ -1182,3 +1466,4 @@ export function TriggersPageClient() {
     </div>
   );
 }
+

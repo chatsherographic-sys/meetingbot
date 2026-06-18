@@ -200,7 +200,10 @@ export function TranscriptsPageClient() {
           <div className="section-row">
             <div>
               <h3>Transcript Logs</h3>
-              <p>Historical transcript records remain read-only.</p>
+              <p>
+                Historical transcript records remain read-only. Transcript logs
+                are batched to keep live triggers fast.
+              </p>
             </div>
             <div className="actions">
               <button

@@ -1,30 +1,144 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   formatTime,
   readJsonResponse,
   type PanelMessage,
-  useControlPanelData,
 } from "@/components/control-panel-client";
 import { useMeetingSession } from "@/components/meeting-session-context";
 import { isBotActiveStatus } from "@/lib/bot-status";
+import type {
+  LiveChatLog,
+  LiveChatTemplate,
+  RecallBotRecord,
+  ScheduledBotJoin,
+} from "@/lib/types";
+
+type OverviewData = {
+  recallBots: RecallBotRecord[];
+  scheduledBotJoins: ScheduledBotJoin[];
+  liveChatTemplates: LiveChatTemplate[];
+  liveChatLogs: LiveChatLog[];
+};
+
+const initialOverviewData: OverviewData = {
+  recallBots: [],
+  scheduledBotJoins: [],
+  liveChatTemplates: [],
+  liveChatLogs: [],
+};
 
 export function OverviewPageClient() {
   const { currentSession, currentSessionId } = useMeetingSession();
-  const { data, error, loading, reload } = useControlPanelData({
-    pollMs: 3000,
-    sessionId: currentSessionId,
-  });
-  const latestWebhookDebugLogs = data.webhookDebugLogs.slice(0, 5);
-  const latestTranscriptLogs = data.transcriptLogs.slice(0, 5);
-  const latestMatchLogs = data.matchLogs.slice(0, 5);
-  const activeBotsCount = data.recallBots.filter((bot) =>
-    isBotActiveStatus(bot.status),
-  ).length;
+  const [data, setData] = useState<OverviewData>(initialOverviewData);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<PanelMessage>(null);
   const [stoppingAllBots, setStoppingAllBots] = useState(false);
+
+  const activeBotsCount = useMemo(
+    () => data.recallBots.filter((bot) => isBotActiveStatus(bot.status)).length,
+    [data.recallBots],
+  );
+  const latestLiveChatLogs = data.liveChatLogs.slice(0, 5);
+  const latestBots = data.recallBots.slice(0, 5);
+  const latestScheduledBotJoins = data.scheduledBotJoins.slice(0, 5);
+  const latestLiveChatTemplates = data.liveChatTemplates.slice(0, 5);
+
+  async function loadOverviewData() {
+    const [botsResponse, scheduledResponse, templatesResponse, logsResponse] =
+      await Promise.all([
+        fetch(
+          `/api/recall/bots?sessionId=${encodeURIComponent(currentSessionId)}&pageSize=200`,
+          { cache: "no-store" },
+        ),
+        fetch(
+          `/api/scheduled-bots?sessionId=${encodeURIComponent(currentSessionId)}&pageSize=200`,
+          { cache: "no-store" },
+        ),
+        fetch(
+          `/api/live-chat/templates?sessionId=${encodeURIComponent(currentSessionId)}&pageSize=200`,
+          { cache: "no-store" },
+        ),
+        fetch(
+          `/api/logs/live-chat?sessionId=${encodeURIComponent(currentSessionId)}&pageSize=200`,
+          { cache: "no-store" },
+        ),
+      ]);
+
+    if (
+      !botsResponse.ok ||
+      !scheduledResponse.ok ||
+      !templatesResponse.ok ||
+      !logsResponse.ok
+    ) {
+      throw new Error("Failed to load dashboard data.");
+    }
+
+    const botsPayload = await readJsonResponse<{
+      recallBots: RecallBotRecord[];
+    }>(botsResponse);
+    const scheduledPayload = await readJsonResponse<{
+      scheduledBotJoins: ScheduledBotJoin[];
+    }>(scheduledResponse);
+    const templatesPayload = await readJsonResponse<{
+      liveChatTemplates: LiveChatTemplate[];
+    }>(templatesResponse);
+    const logsPayload = await readJsonResponse<{
+      liveChatLogs: LiveChatLog[];
+    }>(logsResponse);
+
+    setData({
+      recallBots: botsPayload.recallBots,
+      scheduledBotJoins: scheduledPayload.scheduledBotJoins,
+      liveChatTemplates: templatesPayload.liveChatTemplates,
+      liveChatLogs: logsPayload.liveChatLogs,
+    });
+    setError(null);
+  }
+
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      try {
+        await loadOverviewData();
+      } catch (loadError) {
+        if (!active) {
+          return;
+        }
+
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load dashboard data.",
+        );
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void loadOverviewData().catch(() => {
+        // The next polling cycle can recover without interrupting the page.
+      });
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [currentSessionId]);
 
   async function handleStopAllActiveBots() {
     if (activeBotsCount === 0) {
@@ -32,7 +146,7 @@ export function OverviewPageClient() {
     }
 
     const confirmed = window.confirm(
-      `Stop all ${activeBotsCount} active bot(s)? This does not delete bot records or logs.`,
+      `Stop all ${activeBotsCount} active bot(s) in the current session? This does not delete bot records or logs.`,
     );
 
     if (!confirmed) {
@@ -46,7 +160,7 @@ export function OverviewPageClient() {
       const response = await fetch(
         `/api/recall/bots/stop-all?sessionId=${encodeURIComponent(currentSessionId)}`,
         {
-        method: "POST",
+          method: "POST",
         },
       );
       const payload = await readJsonResponse<{
@@ -75,7 +189,7 @@ export function OverviewPageClient() {
         type: payload.failedCount > 0 ? "error" : "success",
         text: `Stopped ${payload.stoppedCount} of ${payload.totalActiveBots} active bot(s).${failureSummary}`,
       });
-      await reload();
+      await loadOverviewData();
     } catch (stopError) {
       setMessage({
         type: "error",
@@ -94,7 +208,7 @@ export function OverviewPageClient() {
       <section className="page-header">
         <div>
           <p className="section-kicker">Overview</p>
-          <h2>Control panel summary</h2>
+          <h2>Live chat sender summary</h2>
           <p className="muted">
             Current session: {currentSession?.name ?? "Default Session"}
           </p>
@@ -127,24 +241,16 @@ export function OverviewPageClient() {
               <div className="stat-value">{activeBotsCount}</div>
             </div>
             <div className="stat">
-              <span className="stat-label">Trigger Rules</span>
-              <div className="stat-value">{data.triggerRules.length}</div>
+              <span className="stat-label">Scheduled Bots</span>
+              <div className="stat-value">{data.scheduledBotJoins.length}</div>
             </div>
             <div className="stat">
-              <span className="stat-label">Timer Trigger Rules</span>
-              <div className="stat-value">{data.timerTriggers.length}</div>
+              <span className="stat-label">Live Chat Templates</span>
+              <div className="stat-value">{data.liveChatTemplates.length}</div>
             </div>
             <div className="stat">
-              <span className="stat-label">Webhook Logs</span>
-              <div className="stat-value">{data.webhookDebugLogs.length}</div>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Transcript Logs</span>
-              <div className="stat-value">{data.transcriptLogs.length}</div>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Matched Triggers</span>
-              <div className="stat-value">{data.matchLogs.length}</div>
+              <span className="stat-label">Live Chat Logs</span>
+              <div className="stat-value">{data.liveChatLogs.length}</div>
             </div>
           </div>
         </div>
@@ -155,39 +261,32 @@ export function OverviewPageClient() {
           <div className="card-header">
             <div className="section-row">
               <div>
-                <h3>Latest Webhook Debug Logs</h3>
-                <p>Newest first, with transcript snippets when available.</p>
+                <h3>Latest Bots</h3>
+                <p>Newest bot records in the current session.</p>
               </div>
-              <Link className="button secondary" href="/webhooks">
+              <Link className="button secondary" href="/bots">
                 Open page
               </Link>
             </div>
           </div>
           <div className="card-body">
             {loading ? (
-              <div className="empty">Loading webhook logs...</div>
-            ) : latestWebhookDebugLogs.length === 0 ? (
-              <div className="empty">No webhook debug logs yet.</div>
+              <div className="empty">Loading bots...</div>
+            ) : latestBots.length === 0 ? (
+              <div className="empty">No bots yet.</div>
             ) : (
               <div className="log-list compact-list">
-                {latestWebhookDebugLogs.map((log) => (
-                  <article className="log-item" key={log.id}>
-                    <h3>{log.eventName}</h3>
+                {latestBots.map((bot) => (
+                  <article className="log-item" key={bot.id}>
+                    <h3>{bot.botName}</h3>
                     <div className="log-meta">
-                      <span className={`pill status-${log.status}`}>
-                        {log.status}
+                      <span className={`pill status-${isBotActiveStatus(bot.status) ? "sent" : "unknown"}`}>
+                        {bot.status}
                       </span>
-                      <span className="pill">Bot: {log.botId ?? "Unknown"}</span>
-                      <span className="pill">{formatTime(log.receivedAt)}</span>
+                      <span className="pill">Role: {bot.role}</span>
+                      <span className="pill">{formatTime(bot.createdAt)}</span>
                     </div>
-                    {log.extractedTranscriptText ? (
-                      <p className="code">
-                        Transcript: {log.extractedTranscriptText}
-                      </p>
-                    ) : null}
-                    {log.errorMessage ? (
-                      <p className="code error-text">Error: {log.errorMessage}</p>
-                    ) : null}
+                    <p className="code">{bot.recallBotId}</p>
                   </article>
                 ))}
               </div>
@@ -199,81 +298,107 @@ export function OverviewPageClient() {
           <div className="card-header">
             <div className="section-row">
               <div>
-                <h3>Latest Transcript Logs</h3>
-                <p>Recent extracted transcript text and match counts.</p>
+                <h3>Latest Scheduled Bot Joins</h3>
+                <p>Newest scheduled join jobs for this session.</p>
               </div>
-              <Link className="button secondary" href="/transcripts">
+              <Link className="button secondary" href="/scheduled-bots">
                 Open page
               </Link>
             </div>
           </div>
           <div className="card-body">
             {loading ? (
-              <div className="empty">Loading transcript logs...</div>
-            ) : latestTranscriptLogs.length === 0 ? (
-              <div className="empty">No transcript logs yet.</div>
+              <div className="empty">Loading scheduled bots...</div>
+            ) : latestScheduledBotJoins.length === 0 ? (
+              <div className="empty">No scheduled bot joins yet.</div>
             ) : (
               <div className="log-list compact-list">
-                {latestTranscriptLogs.map((log) => (
+                {latestScheduledBotJoins.map((schedule) => (
+                  <article className="log-item" key={schedule.id}>
+                    <h3>{schedule.name}</h3>
+                    <div className="log-meta">
+                      <span className="pill">Status: {schedule.status}</span>
+                      <span className="pill">Bots: {schedule.botCount}</span>
+                      <span className="pill">
+                        {formatTime(schedule.scheduledAt)}
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-header">
+            <div className="section-row">
+              <div>
+                <h3>Latest Live Chat Templates</h3>
+                <p>Saved messages ready to send through selected bots.</p>
+              </div>
+              <Link className="button secondary" href="/live-chat">
+                Open page
+              </Link>
+            </div>
+          </div>
+          <div className="card-body">
+            {loading ? (
+              <div className="empty">Loading templates...</div>
+            ) : latestLiveChatTemplates.length === 0 ? (
+              <div className="empty">No live chat templates yet.</div>
+            ) : (
+              <div className="log-list compact-list">
+                {latestLiveChatTemplates.map((template) => (
+                  <article className="log-item" key={template.id}>
+                    <h3>{template.name}</h3>
+                    <div className="log-meta">
+                      <span className="pill">Mode: {template.senderMode}</span>
+                      <span className="pill">{formatTime(template.updatedAt)}</span>
+                    </div>
+                    <p className="code">{template.message}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-header">
+            <div className="section-row">
+              <div>
+                <h3>Latest Live Chat Logs</h3>
+                <p>Newest send results from saved templates or manual sends.</p>
+              </div>
+              <Link className="button secondary" href="/live-chat">
+                Open page
+              </Link>
+            </div>
+          </div>
+          <div className="card-body">
+            {loading ? (
+              <div className="empty">Loading live chat logs...</div>
+            ) : latestLiveChatLogs.length === 0 ? (
+              <div className="empty">No live chat logs yet.</div>
+            ) : (
+              <div className="log-list compact-list">
+                {latestLiveChatLogs.map((log) => (
                   <article className="log-item" key={log.id}>
                     <h3>{formatTime(log.createdAt)}</h3>
                     <div className="log-meta">
-                      <span className="pill">Bot: {log.botId ?? "Unknown"}</span>
-                      <span className="pill">Event: {log.sourceEvent}</span>
-                      <span className="pill">
-                        Matched rules: {log.matchedRuleIds.length}
-                      </span>
-                    </div>
-                    <p className="code">
-                      {log.transcriptText || "(empty transcript)"}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="card">
-          <div className="card-header">
-            <div className="section-row">
-              <div>
-                <h3>Latest Matched Trigger Logs</h3>
-                <p>See the latest dry-run, sent, or failed chat actions.</p>
-              </div>
-              <Link className="button secondary" href="/matched-triggers">
-                Open page
-              </Link>
-            </div>
-          </div>
-          <div className="card-body">
-            {loading ? (
-              <div className="empty">Loading matched trigger logs...</div>
-            ) : latestMatchLogs.length === 0 ? (
-              <div className="empty">No matched trigger logs yet.</div>
-            ) : (
-              <div className="log-list compact-list">
-                {latestMatchLogs.map((log) => (
-                  <article className="log-item" key={log.id}>
-                    <h3>{log.triggerPhrase}</h3>
-                    <p className="code">{log.action}</p>
-                    <div className="log-meta">
                       <span className={`pill status-${log.status}`}>
                         {log.status}
                       </span>
-                      <span className="pill">Bot: {log.botId ?? "Unknown"}</span>
-                      <span className="pill">{formatTime(log.createdAt)}</span>
+                      <span className="pill">Mode: {log.senderMode}</span>
                     </div>
-                    {log.errorMessage ? (
-                      <p className="code error-text">Error: {log.errorMessage}</p>
-                    ) : null}
+                    <p className="code">{log.message}</p>
                   </article>
                 ))}
               </div>
             )}
           </div>
         </section>
-
       </div>
     </div>
   );

@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { isBotActiveStatus, isBotInCallStatus } from "@/lib/bot-status";
 import { normalizeTranscript } from "@/lib/normalize";
 import {
+  matchesSlotAliasGroups,
+  normalizeSlotAliasGroups,
+} from "@/lib/trigger-aliases";
+import {
   buildCreateRecallBotPayload,
   createRecallBot,
   getRecallBot,
@@ -19,6 +23,7 @@ import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import type {
   MeetingSession,
   MeetingSessionStatus,
+  LiveChatTemplate,
   LiveChatLog,
   MatchLog,
   MatchSenderResult,
@@ -30,6 +35,8 @@ import type {
   SenderMode,
   StorageLoggingMode,
   StoreData,
+  TriggerMatchType,
+  TriggerSlotAliasGroup,
   TimerTrigger,
   TimerTriggerSenderMode,
   TimerTriggerLog,
@@ -47,6 +54,13 @@ const activeTriggerExecutionLocks = new Map<
   }
 >();
 const recentPartialTranscriptFingerprints = new Map<string, number>();
+type TranscriptLogMode = "off" | "final_only" | "debug_all";
+type BufferedTranscriptLogEntry = {
+  log: TranscriptLog;
+  queuedAt: number;
+};
+const transcriptLogBuffers = new Map<string, BufferedTranscriptLogEntry[]>();
+const transcriptLogFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 export const emptyStore: StoreData = {
   storageLoggingMode: "production_minimal",
@@ -58,6 +72,7 @@ export const emptyStore: StoreData = {
   recallBots: [],
   timerTriggers: [],
   timerTriggerLogs: [],
+  liveChatTemplates: [],
   liveChatLogs: [],
   liveChatRoundRobinIndex: 0,
   webhookDebugLogs: [],
@@ -117,6 +132,7 @@ type LegacyScheduledBotJoin = Partial<ScheduledBotJoin>;
 type LegacyMatchLog = Partial<MatchLog>;
 type LegacyTimerTrigger = Partial<TimerTrigger>;
 type LegacyTimerTriggerLog = Partial<TimerTriggerLog>;
+type LegacyLiveChatTemplate = Partial<LiveChatTemplate>;
 type LegacyLiveChatLog = Partial<LiveChatLog>;
 
 type PaginationOptions = {
@@ -175,6 +191,9 @@ type ScheduledBotJoinListOptions = PaginationOptions & {
 type TimerTriggerLogListOptions = PaginationOptions & {
   sessionId?: string;
 };
+type LiveChatTemplateListOptions = PaginationOptions & {
+  sessionId?: string;
+};
 type LiveChatLogListOptions = PaginationOptions & {
   sessionId?: string;
 };
@@ -212,6 +231,7 @@ export function normalizeStoreData(
     matchLogs?: LegacyMatchLog[];
     timerTriggers?: LegacyTimerTrigger[];
     timerTriggerLogs?: LegacyTimerTriggerLog[];
+    liveChatTemplates?: LegacyLiveChatTemplate[];
     liveChatLogs?: LegacyLiveChatLog[];
   };
 
@@ -265,6 +285,10 @@ export function normalizeStoreData(
     timerTriggerLogs: (parsed.timerTriggerLogs ?? []).map((rawLog) => ({
       ...migrateTimerTriggerLog(rawLog),
       sessionId: resolveSessionId(rawLog.sessionId),
+    })),
+    liveChatTemplates: (parsed.liveChatTemplates ?? []).map((rawTemplate) => ({
+      ...migrateLiveChatTemplate(rawTemplate),
+      sessionId: resolveSessionId(rawTemplate.sessionId),
     })),
     liveChatLogs: (parsed.liveChatLogs ?? []).map((rawLog) => ({
       ...migrateLiveChatLog(rawLog),
@@ -451,6 +475,7 @@ function hasRecordsMissingValidSession(
     matchLogs?: LegacyMatchLog[];
     timerTriggers?: LegacyTimerTrigger[];
     timerTriggerLogs?: LegacyTimerTriggerLog[];
+    liveChatTemplates?: LegacyLiveChatTemplate[];
     liveChatLogs?: LegacyLiveChatLog[];
   },
   validSessionIds: Set<string>,
@@ -462,6 +487,7 @@ function hasRecordsMissingValidSession(
     parsed.recallBots ?? [],
     parsed.timerTriggers ?? [],
     parsed.timerTriggerLogs ?? [],
+    parsed.liveChatTemplates ?? [],
     parsed.liveChatLogs ?? [],
     parsed.webhookDebugLogs ?? [],
   ];
@@ -496,6 +522,21 @@ function parseStoreData(raw: string): StoreData {
 
 function migrateTriggerRule(rawRule: LegacyTriggerRule): TriggerRule {
   const triggerPhrase = String(rawRule.triggerPhrase ?? "").trim();
+  const slotAliasGroups = normalizeSlotAliasGroups(
+    triggerPhrase,
+    Array.isArray(rawRule.slotAliasGroups)
+      ? rawRule.slotAliasGroups
+          .filter((group) => group && typeof group === "object")
+          .map((group) => ({
+            source: String((group as { source?: unknown }).source ?? "").trim(),
+            aliases: Array.isArray((group as { aliases?: unknown }).aliases)
+              ? (group as { aliases: unknown[] }).aliases.map((alias) =>
+                  String(alias ?? "").trim(),
+                )
+              : [],
+          }))
+      : [],
+  );
   const rawMaxTriggerCount = Number(rawRule.maxTriggerCount ?? 0);
   const rawNextSenderIndex = Number(rawRule.nextSenderIndex ?? 0);
 
@@ -508,7 +549,10 @@ function migrateTriggerRule(rawRule: LegacyTriggerRule): TriggerRule {
         rawRule.normalizedTrigger ??
           rawRule.normalizedTriggerPhrase ??
           normalizeTranscript(triggerPhrase),
-      ) || normalizeTranscript(triggerPhrase),
+    ) || normalizeTranscript(triggerPhrase),
+    aliases: [],
+    normalizedAliases: [],
+    slotAliasGroups,
     replyMessage: String(rawRule.replyMessage ?? "").trim(),
     cooldownSeconds: Math.max(0, Math.floor(Number(rawRule.cooldownSeconds ?? 0))),
     responseDelaySeconds: Math.min(
@@ -598,6 +642,10 @@ function migrateMatchLog(rawLog: LegacyMatchLog): MatchLog {
       typeof rawLog.sourceWebhookBotId === "string"
         ? rawLog.sourceWebhookBotId.trim()
         : legacyBotId,
+    matchType:
+      rawLog.matchType === "phrase_alias" || rawLog.matchType === "slot_alias"
+        ? rawLog.matchType
+        : "exact_trigger",
     ruleId: String(rawLog.ruleId ?? "").trim(),
     triggerPhrase: String(rawLog.triggerPhrase ?? "").trim(),
     replyMessage: String(rawLog.replyMessage ?? "").trim(),
@@ -1028,6 +1076,59 @@ function migrateLiveChatLog(rawLog: LegacyLiveChatLog): LiveChatLog {
   };
 }
 
+function normalizeLiveChatTemplateSenderMode(
+  value: unknown,
+): LiveChatTemplate["senderMode"] {
+  if (value === "all_bots") {
+    return "all_bots";
+  }
+
+  if (value === "round_robin") {
+    return "round_robin";
+  }
+
+  return "selected_bots";
+}
+
+function migrateLiveChatTemplate(
+  rawTemplate: LegacyLiveChatTemplate,
+): LiveChatTemplate {
+  const createdAt =
+    typeof rawTemplate.createdAt === "string"
+      ? rawTemplate.createdAt
+      : new Date().toISOString();
+  const updatedAt =
+    typeof rawTemplate.updatedAt === "string"
+      ? rawTemplate.updatedAt
+      : createdAt;
+
+  return {
+    id: String(rawTemplate.id ?? randomUUID()),
+    sessionId: DEFAULT_SESSION_ID,
+    name: String(rawTemplate.name ?? "").trim() || "Live Chat Template",
+    message: String(rawTemplate.message ?? "").trim(),
+    senderMode: normalizeLiveChatTemplateSenderMode(rawTemplate.senderMode),
+    botIds: Array.isArray(rawTemplate.botIds)
+      ? rawTemplate.botIds
+          .map((botId) => String(botId ?? "").trim())
+          .filter(Boolean)
+      : [],
+    roundRobinIndex: normalizeNonNegativeInteger(
+      Number(rawTemplate.roundRobinIndex ?? 0),
+    ),
+    lastSentBotId:
+      typeof rawTemplate.lastSentBotId === "string"
+        ? rawTemplate.lastSentBotId.trim() || null
+        : null,
+    lastSentAt:
+      typeof rawTemplate.lastSentAt === "string"
+        ? rawTemplate.lastSentAt
+        : null,
+    createdAt,
+    updatedAt,
+  };
+}
+
 async function readStore(): Promise<StoreData> {
   const storageAdapter = createStorageAdapter({
     emptyStore,
@@ -1120,6 +1221,38 @@ function isDebugStorageLoggingMode(store: Pick<StoreData, "storageLoggingMode">)
   return store.storageLoggingMode === "debug";
 }
 
+function normalizeTranscriptLogMode(value: string | undefined): TranscriptLogMode {
+  if (value === "off" || value === "final_only" || value === "debug_all") {
+    return value;
+  }
+
+  return "final_only";
+}
+
+function getTranscriptLogMode(): TranscriptLogMode {
+  return normalizeTranscriptLogMode(process.env.TRANSCRIPT_LOG_MODE?.trim());
+}
+
+function getTranscriptLogBufferMs(): number {
+  const parsed = Number(process.env.TRANSCRIPT_LOG_BUFFER_MS?.trim() ?? 2000);
+
+  if (!Number.isFinite(parsed)) {
+    return 2000;
+  }
+
+  return Math.min(3000, Math.max(1500, Math.floor(parsed)));
+}
+
+function getTranscriptLogMaxQueue(): number {
+  const parsed = Number(process.env.TRANSCRIPT_LOG_MAX_QUEUE?.trim() ?? 200);
+
+  if (!Number.isFinite(parsed)) {
+    return 200;
+  }
+
+  return Math.max(1, Math.floor(parsed));
+}
+
 function shouldPersistWebhookDebugLog(
   store: Pick<StoreData, "storageLoggingMode">,
   status: WebhookDebugLog["status"],
@@ -1129,8 +1262,23 @@ function shouldPersistWebhookDebugLog(
 
 function shouldPersistTranscriptLog(
   store: Pick<StoreData, "storageLoggingMode">,
+  sourceEvent: TranscriptLog["sourceEvent"],
 ): boolean {
-  return isDebugStorageLoggingMode(store);
+  if (!isDebugStorageLoggingMode(store)) {
+    return false;
+  }
+
+  const transcriptLogMode = getTranscriptLogMode();
+
+  if (transcriptLogMode === "off") {
+    return false;
+  }
+
+  if (transcriptLogMode === "final_only") {
+    return sourceEvent === "transcript.data";
+  }
+
+  return true;
 }
 
 function shouldPersistSkippedTimerTriggerLog(
@@ -1379,6 +1527,14 @@ function sortLiveChatLogs(liveChatLogs: LiveChatLog[]): LiveChatLog[] {
   return [...liveChatLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+function sortLiveChatTemplates(
+  liveChatTemplates: LiveChatTemplate[],
+): LiveChatTemplate[] {
+  return [...liveChatTemplates].sort((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt),
+  );
+}
+
 function ensureTimerTriggerInput(input: {
   name: string;
   delayMinutesAfterJoin: number;
@@ -1489,6 +1645,8 @@ function ensureScheduledBotJoinInput(input: {
 
 function ensureTriggerRuleInput(input: {
   triggerPhrase: string;
+  aliases: string[];
+  slotAliasGroups: TriggerSlotAliasGroup[];
   replyMessage: string;
   cooldownSeconds: number;
   responseDelaySeconds: number;
@@ -1499,6 +1657,9 @@ function ensureTriggerRuleInput(input: {
 }): {
   triggerPhrase: string;
   normalizedTrigger: string;
+  aliases: string[];
+  normalizedAliases: string[];
+  slotAliasGroups: TriggerSlotAliasGroup[];
   replyMessage: string;
   cooldownSeconds: number;
   responseDelaySeconds: number;
@@ -1523,6 +1684,10 @@ function ensureTriggerRuleInput(input: {
     senderMode === "specific_bots"
       ? input.senderBotIds.map((botId) => botId.trim()).filter(Boolean)
       : [];
+  const normalizedSlotAliasGroups = normalizeSlotAliasGroups(
+    triggerPhrase,
+    input.slotAliasGroups,
+  );
   const maxTriggerCount = normalizeMaxTriggerCount(input.maxTriggerCount);
 
   if (!triggerPhrase) {
@@ -1540,6 +1705,9 @@ function ensureTriggerRuleInput(input: {
   return {
     triggerPhrase,
     normalizedTrigger,
+    aliases: [],
+    normalizedAliases: [],
+    slotAliasGroups: normalizedSlotAliasGroups,
     replyMessage,
     cooldownSeconds,
     responseDelaySeconds,
@@ -1605,6 +1773,25 @@ function ensureNoDuplicateEnabledTriggerRule(input: {
   throw new Error("This trigger phrase already exists after normalization.");
 }
 
+function getTriggerRuleMatchType(
+  rule: TriggerRule,
+  transcriptText: string,
+  normalizedTranscriptText: string,
+): TriggerMatchType | null {
+  if (normalizedTranscriptText.includes(rule.normalizedTrigger)) {
+    return "exact_trigger";
+  }
+
+  if (
+    rule.slotAliasGroups.length > 0 &&
+    matchesSlotAliasGroups(rule.triggerPhrase, rule.slotAliasGroups, transcriptText)
+  ) {
+    return "slot_alias";
+  }
+
+  return null;
+}
+
 export async function listTriggerRules(
   options?: TriggerRuleListOptions,
 ): Promise<PaginatedResult<TriggerRule>> {
@@ -1633,7 +1820,8 @@ export async function listTriggerRules(
 
     if (
       triggerSearch &&
-      !rule.triggerPhrase.toLowerCase().includes(triggerSearch)
+      !rule.triggerPhrase.toLowerCase().includes(triggerSearch) &&
+      !rule.aliases.some((alias) => alias.toLowerCase().includes(triggerSearch))
     ) {
       return false;
     }
@@ -1658,6 +1846,8 @@ export async function listTriggerRules(
 export async function createTriggerRule(input: {
   sessionId: string;
   triggerPhrase: string;
+  aliases: string[];
+  slotAliasGroups: TriggerSlotAliasGroup[];
   replyMessage: string;
   cooldownSeconds: number;
   responseDelaySeconds: number;
@@ -1672,6 +1862,8 @@ export async function createTriggerRule(input: {
       ensureDefaultSessionExists(store).id;
     const normalizedInput = ensureTriggerRuleInput({
       triggerPhrase: input.triggerPhrase,
+      aliases: input.aliases,
+      slotAliasGroups: input.slotAliasGroups,
       replyMessage: input.replyMessage,
       cooldownSeconds: input.cooldownSeconds,
       responseDelaySeconds: input.responseDelaySeconds,
@@ -1697,6 +1889,9 @@ export async function createTriggerRule(input: {
       sessionId,
       triggerPhrase: normalizedInput.triggerPhrase,
       normalizedTrigger: normalizedInput.normalizedTrigger,
+      aliases: normalizedInput.aliases,
+      normalizedAliases: normalizedInput.normalizedAliases,
+      slotAliasGroups: normalizedInput.slotAliasGroups,
       replyMessage: normalizedInput.replyMessage,
       cooldownSeconds: normalizedInput.cooldownSeconds,
       responseDelaySeconds: normalizedInput.responseDelaySeconds,
@@ -1720,6 +1915,8 @@ export async function updateTriggerRule(
   id: string,
   input: {
     triggerPhrase?: string;
+    aliases?: string[];
+    slotAliasGroups?: TriggerSlotAliasGroup[];
     replyMessage?: string;
     cooldownSeconds?: number;
     responseDelaySeconds?: number;
@@ -1738,6 +1935,8 @@ export async function updateTriggerRule(
 
     const normalizedInput = ensureTriggerRuleInput({
       triggerPhrase: input.triggerPhrase ?? rule.triggerPhrase,
+      aliases: input.aliases ?? rule.aliases,
+      slotAliasGroups: input.slotAliasGroups ?? rule.slotAliasGroups,
       replyMessage: input.replyMessage ?? rule.replyMessage,
       cooldownSeconds: input.cooldownSeconds ?? rule.cooldownSeconds,
       responseDelaySeconds:
@@ -1768,6 +1967,9 @@ export async function updateTriggerRule(
 
     rule.triggerPhrase = normalizedInput.triggerPhrase;
     rule.normalizedTrigger = normalizedInput.normalizedTrigger;
+    rule.aliases = normalizedInput.aliases;
+    rule.normalizedAliases = normalizedInput.normalizedAliases;
+    rule.slotAliasGroups = normalizedInput.slotAliasGroups;
     rule.replyMessage = normalizedInput.replyMessage;
     rule.cooldownSeconds = normalizedInput.cooldownSeconds;
     rule.responseDelaySeconds = normalizedInput.responseDelaySeconds;
@@ -1955,6 +2157,26 @@ export async function listEnabledTriggerRulesBySession(
         sessionId: String(rule.session_id ?? ""),
         triggerPhrase: String(rule.trigger_phrase ?? ""),
         normalizedTrigger: String(rule.normalized_trigger ?? ""),
+        aliases: Array.isArray(rule.aliases)
+          ? rule.aliases.map((alias: unknown) => String(alias))
+          : [],
+        normalizedAliases: Array.isArray(rule.normalized_aliases)
+          ? rule.normalized_aliases.map((alias: unknown) => String(alias))
+          : [],
+        slotAliasGroups: Array.isArray(rule.slot_alias_groups)
+          ? rule.slot_alias_groups.map((group: unknown) => ({
+              source: String(
+                (group as { source?: unknown } | null)?.source ?? "",
+              ),
+              aliases: Array.isArray(
+                (group as { aliases?: unknown } | null)?.aliases,
+              )
+                ? (
+                    (group as { aliases: unknown[] }).aliases ?? []
+                  ).map((alias) => String(alias ?? ""))
+                : [],
+            }))
+          : [],
         replyMessage: String(rule.reply_message ?? ""),
         cooldownSeconds: Number(rule.cooldown_seconds ?? 0),
         responseDelaySeconds: Number(rule.response_delay_seconds ?? 0),
@@ -2872,6 +3094,154 @@ export async function clearTimerTriggerLogs(sessionId?: string): Promise<void> {
   });
 }
 
+function ensureLiveChatTemplateInput(input: {
+  name: string;
+  message: string;
+  senderMode: LiveChatTemplate["senderMode"];
+  botIds: string[];
+}): {
+  name: string;
+  message: string;
+  senderMode: LiveChatTemplate["senderMode"];
+  botIds: string[];
+} {
+  const name = input.name.trim();
+  const message = input.message.trim();
+  const senderMode = normalizeLiveChatTemplateSenderMode(input.senderMode);
+  const botIds =
+    senderMode === "all_bots"
+      ? []
+      : input.botIds.map((botId) => botId.trim()).filter(Boolean);
+
+  if (!name) {
+    throw new Error("Template name is required.");
+  }
+
+  if (!message) {
+    throw new Error("Template message is required.");
+  }
+
+  return {
+    name,
+    message,
+    senderMode,
+    botIds,
+  };
+}
+
+export async function listLiveChatTemplates(
+  options?: LiveChatTemplateListOptions,
+): Promise<PaginatedResult<LiveChatTemplate>> {
+  const store = await readStore();
+  return paginateItems(
+    sortLiveChatTemplates(store.liveChatTemplates).filter((template) =>
+      matchesSessionId(template.sessionId, options?.sessionId),
+    ),
+    options,
+  );
+}
+
+export async function createLiveChatTemplate(input: {
+  sessionId: string;
+  name: string;
+  message: string;
+  senderMode: LiveChatTemplate["senderMode"];
+  botIds: string[];
+}): Promise<LiveChatTemplate> {
+  return mutateStore(async (store) => {
+    const session =
+      findMeetingSessionById(store, input.sessionId) ??
+      ensureDefaultSessionExists(store);
+    const sessionBlockedMessage = getSessionOperationBlockedMessage(session.status);
+
+    if (sessionBlockedMessage) {
+      throw new Error(sessionBlockedMessage);
+    }
+
+    const normalizedInput = ensureLiveChatTemplateInput(input);
+    const template: LiveChatTemplate = {
+      id: randomUUID(),
+      sessionId: session.id,
+      name: normalizedInput.name,
+      message: normalizedInput.message,
+      senderMode: normalizedInput.senderMode,
+      botIds: normalizedInput.botIds,
+      roundRobinIndex: 0,
+      lastSentBotId: null,
+      lastSentAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    store.liveChatTemplates.unshift(template);
+    return template;
+  });
+}
+
+export async function updateLiveChatTemplate(
+  id: string,
+  input: {
+    name?: string;
+    message?: string;
+    senderMode?: LiveChatTemplate["senderMode"];
+    botIds?: string[];
+  },
+): Promise<LiveChatTemplate> {
+  return mutateStore(async (store) => {
+    const template = store.liveChatTemplates.find((item) => item.id === id);
+
+    if (!template) {
+      throw new Error("Live chat template not found.");
+    }
+
+    const session =
+      findMeetingSessionById(store, template.sessionId) ??
+      ensureDefaultSessionExists(store);
+    const sessionBlockedMessage = getSessionOperationBlockedMessage(session.status);
+
+    if (sessionBlockedMessage) {
+      throw new Error(sessionBlockedMessage);
+    }
+
+    const normalizedInput = ensureLiveChatTemplateInput({
+      name: input.name ?? template.name,
+      message: input.message ?? template.message,
+      senderMode: input.senderMode ?? template.senderMode,
+      botIds: input.botIds ?? template.botIds,
+    });
+    const senderConfigChanged =
+      normalizedInput.senderMode !== template.senderMode ||
+      normalizedInput.botIds.length !== template.botIds.length ||
+      normalizedInput.botIds.some((botId, index) => botId !== template.botIds[index]);
+
+    template.name = normalizedInput.name;
+    template.message = normalizedInput.message;
+    template.senderMode = normalizedInput.senderMode;
+    template.botIds = normalizedInput.botIds;
+    if (senderConfigChanged) {
+      template.roundRobinIndex = 0;
+      template.lastSentBotId = null;
+      template.lastSentAt = null;
+    }
+    template.updatedAt = new Date().toISOString();
+
+    return template;
+  });
+}
+
+export async function deleteLiveChatTemplate(id: string): Promise<void> {
+  await mutateStore(async (store) => {
+    const initialCount = store.liveChatTemplates.length;
+    store.liveChatTemplates = store.liveChatTemplates.filter(
+      (template) => template.id !== id,
+    );
+
+    if (store.liveChatTemplates.length === initialCount) {
+      throw new Error("Live chat template not found.");
+    }
+  });
+}
+
 export async function listLiveChatLogs(
   options?: LiveChatLogListOptions,
 ): Promise<PaginatedResult<LiveChatLog>> {
@@ -3520,6 +3890,76 @@ function buildLiveChatSenderTargets(input: {
   };
 }
 
+function buildTemplateRoundRobinSenderTargets(input: {
+  botIds: string[];
+  recallBots: RecallBotRecord[];
+  roundRobinIndex: number;
+}): {
+  senderTargets: SenderTarget[];
+  senderBotIdsUsed: string[];
+  chosenRoundRobinBotId: string | null;
+  chosenRoundRobinBotName: string | null;
+  nextRoundRobinIndex: number;
+} {
+  const activeBots = input.recallBots.filter((bot) => isBotActiveStatus(bot.status));
+  const uniqueActiveBots = activeBots.filter(
+    (bot, index, allBots) =>
+      allBots.findIndex(
+        (candidate) => candidate.recallBotId === bot.recallBotId,
+      ) === index,
+  );
+  const dedupedSelectedBotIds = [...new Set(input.botIds)];
+  const eligibleBots =
+    dedupedSelectedBotIds.length > 0
+      ? dedupedSelectedBotIds
+          .map((botId) =>
+            uniqueActiveBots.find((bot) => bot.recallBotId === botId) ?? null,
+          )
+          .filter((bot): bot is RecallBotRecord => Boolean(bot))
+      : uniqueActiveBots;
+
+  if (eligibleBots.length === 0) {
+    return {
+      senderTargets: [
+        {
+          senderBotId: null,
+          senderBotName: null,
+          isAvailable: false,
+          errorMessage:
+            dedupedSelectedBotIds.length > 0
+              ? "No eligible active bot is available in this template's round robin pool."
+              : "no_active_sender_bot",
+        },
+      ],
+      senderBotIdsUsed: [],
+      chosenRoundRobinBotId: null,
+      chosenRoundRobinBotName: null,
+      nextRoundRobinIndex: input.roundRobinIndex,
+    };
+  }
+
+  const senderIndex = normalizeNextSenderIndex(
+    input.roundRobinIndex,
+    eligibleBots.length,
+  );
+  const senderBot = eligibleBots[senderIndex];
+
+  return {
+    senderTargets: [
+      {
+        senderBotId: senderBot.recallBotId,
+        senderBotName: senderBot.botName,
+        isAvailable: true,
+        errorMessage: null,
+      },
+    ],
+    senderBotIdsUsed: [senderBot.recallBotId],
+    chosenRoundRobinBotId: senderBot.recallBotId,
+    chosenRoundRobinBotName: senderBot.botName,
+    nextRoundRobinIndex: normalizeNonNegativeInteger(senderIndex + 1),
+  };
+}
+
 async function executeSenderTargets(input: {
   triggerExecutionId: string;
   senderTargets: SenderTarget[];
@@ -3685,6 +4125,7 @@ function mapMatchLogToSupabaseRow(log: MatchLog) {
     trigger_execution_id: log.triggerExecutionId,
     source_event: log.sourceEvent,
     source_webhook_bot_id: log.sourceWebhookBotId,
+    match_type: log.matchType,
     rule_id: log.ruleId,
     trigger_phrase: log.triggerPhrase,
     reply_message: log.replyMessage,
@@ -3736,19 +4177,126 @@ async function appendMatchedTriggerLog(log: MatchLog): Promise<void> {
   });
 }
 
-async function appendTranscriptLog(log: TranscriptLog): Promise<void> {
+function pushTranscriptLog(store: StoreData, log: TranscriptLog): void {
+  store.transcriptLogs.unshift(log);
+
+  if (store.transcriptLogs.length > 100) {
+    store.transcriptLogs = store.transcriptLogs.slice(0, 100);
+  }
+}
+
+function combineBufferedTranscriptLogs(
+  logs: TranscriptLog[],
+): TranscriptLog | null {
+  if (logs.length === 0) {
+    return null;
+  }
+
+  const transcriptChunks = Array.from(
+    new Set(
+      logs
+        .map((log) => log.transcriptText.trim())
+        .filter(Boolean),
+    ),
+  );
+  const combinedTranscriptText = transcriptChunks.join("\n");
+  const matchedRuleIds = Array.from(
+    new Set(logs.flatMap((log) => log.matchedRuleIds)),
+  );
+  const botIds = Array.from(
+    new Set(logs.map((log) => log.botId).filter((botId): botId is string => Boolean(botId))),
+  );
+  const latestLog = logs.reduce((latest, current) =>
+    current.createdAt >= latest.createdAt ? current : latest,
+  );
+
+  if (!combinedTranscriptText) {
+    return null;
+  }
+
+  return {
+    id: randomUUID(),
+    sessionId: latestLog.sessionId,
+    botId: botIds.length === 1 ? botIds[0] : null,
+    transcriptText: combinedTranscriptText,
+    normalizedTranscriptText: normalizeTranscript(combinedTranscriptText),
+    matchedRuleIds,
+    sourceEvent: logs.some((log) => log.sourceEvent === "transcript.data")
+      ? "transcript.data"
+      : "transcript.partial_data",
+    createdAt: latestLog.createdAt,
+  };
+}
+
+function dropOldestBufferedTranscriptLog(): void {
+  let oldestSessionId: string | null = null;
+  let oldestQueuedAt = Number.POSITIVE_INFINITY;
+
+  for (const [sessionId, entries] of transcriptLogBuffers.entries()) {
+    const firstEntry = entries[0];
+
+    if (!firstEntry) {
+      continue;
+    }
+
+    if (firstEntry.queuedAt < oldestQueuedAt) {
+      oldestQueuedAt = firstEntry.queuedAt;
+      oldestSessionId = sessionId;
+    }
+  }
+
+  if (!oldestSessionId) {
+    return;
+  }
+
+  const entries = transcriptLogBuffers.get(oldestSessionId);
+
+  if (!entries || entries.length === 0) {
+    return;
+  }
+
+  entries.shift();
+
+  if (entries.length === 0) {
+    transcriptLogBuffers.delete(oldestSessionId);
+    const existingTimer = transcriptLogFlushTimers.get(oldestSessionId);
+
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      transcriptLogFlushTimers.delete(oldestSessionId);
+    }
+  }
+}
+
+function getBufferedTranscriptLogQueueSize(): number {
+  let total = 0;
+
+  for (const entries of transcriptLogBuffers.values()) {
+    total += entries.length;
+  }
+
+  return total;
+}
+
+async function appendTranscriptLogs(logs: TranscriptLog[]): Promise<void> {
+  if (logs.length === 0) {
+    return;
+  }
+
   if (getStorageDriver() === "supabase") {
     const client = createSupabaseServiceRoleClient();
-    const { error } = await client.from("transcript_logs").insert({
-      id: log.id,
-      session_id: log.sessionId,
-      bot_id: log.botId,
-      transcript_text: log.transcriptText,
-      normalized_transcript_text: log.normalizedTranscriptText,
-      matched_rule_ids: log.matchedRuleIds,
-      source_event: log.sourceEvent,
-      created_at: log.createdAt,
-    });
+    const { error } = await client.from("transcript_logs").insert(
+      logs.map((log) => ({
+        id: log.id,
+        session_id: log.sessionId,
+        bot_id: log.botId,
+        transcript_text: log.transcriptText,
+        normalized_transcript_text: log.normalizedTranscriptText,
+        matched_rule_ids: log.matchedRuleIds,
+        source_event: log.sourceEvent,
+        created_at: log.createdAt,
+      })),
+    );
 
     if (error) {
       throw new Error(error.message);
@@ -3758,11 +4306,69 @@ async function appendTranscriptLog(log: TranscriptLog): Promise<void> {
   }
 
   await mutateStore(async (store) => {
-    store.transcriptLogs.unshift(log);
-    if (store.transcriptLogs.length > 100) {
-      store.transcriptLogs = store.transcriptLogs.slice(0, 100);
+    for (const log of logs) {
+      pushTranscriptLog(store, log);
     }
   });
+}
+
+async function flushBufferedTranscriptLogsForSession(
+  sessionId: string,
+): Promise<void> {
+  const entries = transcriptLogBuffers.get(sessionId) ?? [];
+  transcriptLogBuffers.delete(sessionId);
+  transcriptLogFlushTimers.delete(sessionId);
+
+  const combinedLog = combineBufferedTranscriptLogs(entries.map((entry) => entry.log));
+
+  if (!combinedLog) {
+    return;
+  }
+
+  try {
+    await appendTranscriptLogs([combinedLog]);
+  } catch (error) {
+    console.error("Failed to flush buffered transcript logs.", error);
+  }
+}
+
+function scheduleTranscriptLogFlush(sessionId: string): void {
+  if (transcriptLogFlushTimers.has(sessionId)) {
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    void flushBufferedTranscriptLogsForSession(sessionId);
+  }, getTranscriptLogBufferMs());
+
+  transcriptLogFlushTimers.set(sessionId, timer);
+}
+
+function bufferTranscriptLog(log: TranscriptLog): void {
+  const sessionId = normalizeSessionIdInput(log.sessionId);
+  const entries = transcriptLogBuffers.get(sessionId) ?? [];
+  entries.push({
+    log: {
+      ...log,
+      sessionId,
+    },
+    queuedAt: Date.now(),
+  });
+  transcriptLogBuffers.set(sessionId, entries);
+
+  while (getBufferedTranscriptLogQueueSize() > getTranscriptLogMaxQueue()) {
+    dropOldestBufferedTranscriptLog();
+  }
+
+  scheduleTranscriptLogFlush(sessionId);
+}
+
+function queueTranscriptLog(log: TranscriptLog): void {
+  bufferTranscriptLog(log);
+}
+
+function queueTranscriptLogForPersistence(log: TranscriptLog): void {
+  queueTranscriptLog(log);
 }
 
 async function updateTriggerRuleStats(rule: TriggerRule): Promise<void> {
@@ -4108,8 +4714,11 @@ export async function processTranscriptWebhook(input: {
       const normalizedTranscriptText = normalizeTranscript(transcriptText);
       const receivedAt = new Date();
       const receivedAtMs = receivedAt.getTime();
-      const persistTranscriptLog =
-        (await getAppSettings()).storageLoggingMode === "debug";
+      const appSettings = await getAppSettings();
+      const persistTranscriptLog = shouldPersistTranscriptLog(
+        appSettings,
+        input.sourceEvent,
+      );
       const transcriptLog = buildTranscriptLog({
         sessionId,
         botId: input.botId,
@@ -4136,7 +4745,7 @@ export async function processTranscriptWebhook(input: {
 
       if (sourceBotRecord && !isListenerRecallBot(sourceBotRecord)) {
         if (persistTranscriptLog) {
-          await appendTranscriptLog(transcriptLog);
+          queueTranscriptLogForPersistence(transcriptLog);
         }
 
         return {
@@ -4159,12 +4768,25 @@ export async function processTranscriptWebhook(input: {
         }
       }
 
-      const matchedRule = sessionRules.find(
-        (rule) =>
-          rule.enabled &&
-          !hasReachedMaxTriggerCount(rule) &&
-          normalizedTranscriptText.includes(rule.normalizedTrigger),
-      );
+      let matchedRule: TriggerRule | undefined;
+      let matchType: TriggerMatchType | null = null;
+      for (const rule of sessionRules) {
+        if (!rule.enabled || hasReachedMaxTriggerCount(rule)) {
+          continue;
+        }
+
+        const candidateMatchType = getTriggerRuleMatchType(
+          rule,
+          transcriptText,
+          normalizedTranscriptText,
+        );
+
+        if (candidateMatchType) {
+          matchedRule = rule;
+          matchType = candidateMatchType;
+          break;
+        }
+      }
       const triggerMatchedAt = matchedRule ? Date.now() : null;
 
       if (matchedRule) {
@@ -4232,6 +4854,7 @@ export async function processTranscriptWebhook(input: {
             triggerExecutionId: activeExecutionLock?.executionId ?? null,
             sourceEvent: input.sourceEvent,
             sourceWebhookBotId: input.botId,
+            matchType: matchType ?? "exact_trigger",
             ruleId: matchedRule.id,
             triggerPhrase: matchedRule.triggerPhrase,
             replyMessage: matchedRule.replyMessage,
@@ -4374,6 +4997,7 @@ export async function processTranscriptWebhook(input: {
                 triggerExecutionId,
                 sourceEvent: input.sourceEvent,
                 sourceWebhookBotId: input.botId,
+                matchType: matchType ?? "exact_trigger",
                 ruleId: matchedRule.id,
                 triggerPhrase: matchedRule.triggerPhrase,
                 replyMessage: matchedRule.replyMessage,
@@ -4478,7 +5102,7 @@ export async function processTranscriptWebhook(input: {
       };
 
       if (persistTranscriptLog) {
-        await appendTranscriptLog(finalTranscriptLog);
+        queueTranscriptLogForPersistence(finalTranscriptLog);
       }
 
       return {
@@ -4540,12 +5164,24 @@ export async function processTranscriptWebhook(input: {
       }
       // Only the first enabled matching rule is allowed to fire so one
       // transcript event cannot generate duplicate Zoom chat messages.
-      matchedRule = sessionRules.find(
-        (rule) =>
-          rule.enabled &&
-          !hasReachedMaxTriggerCount(rule) &&
-          normalizedTranscriptText.includes(rule.normalizedTrigger),
-      );
+      let matchType: TriggerMatchType | null = null;
+      for (const rule of sessionRules) {
+        if (!rule.enabled || hasReachedMaxTriggerCount(rule)) {
+          continue;
+        }
+
+        const candidateMatchType = getTriggerRuleMatchType(
+          rule,
+          transcriptText,
+          normalizedTranscriptText,
+        );
+
+        if (candidateMatchType) {
+          matchedRule = rule;
+          matchType = candidateMatchType;
+          break;
+        }
+      }
       triggerMatchedAt = matchedRule ? Date.now() : null;
 
       if (matchedRule) {
@@ -4605,9 +5241,10 @@ export async function processTranscriptWebhook(input: {
             sessionId,
             botId: input.botId,
             triggerExecutionId: activeExecutionLock?.executionId ?? null,
-            sourceEvent: input.sourceEvent,
-            sourceWebhookBotId: input.botId,
-            ruleId: activeMatchedRule.id,
+              sourceEvent: input.sourceEvent,
+              sourceWebhookBotId: input.botId,
+              matchType: matchType ?? "exact_trigger",
+              ruleId: activeMatchedRule.id,
             triggerPhrase: activeMatchedRule.triggerPhrase,
             replyMessage: activeMatchedRule.replyMessage,
             transcriptText,
@@ -4717,6 +5354,7 @@ export async function processTranscriptWebhook(input: {
                 triggerExecutionId,
                 sourceEvent: input.sourceEvent,
                 sourceWebhookBotId: input.botId,
+                matchType: matchType ?? "exact_trigger",
                 ruleId: activeMatchedRule.id,
                 triggerPhrase: activeMatchedRule.triggerPhrase,
                 replyMessage: activeMatchedRule.replyMessage,
@@ -4794,11 +5432,8 @@ export async function processTranscriptWebhook(input: {
       createdAt: receivedAt.toISOString(),
     });
 
-    if (shouldPersistTranscriptLog(store)) {
-      store.transcriptLogs.unshift(transcriptLog);
-      if (store.transcriptLogs.length > 100) {
-        store.transcriptLogs = store.transcriptLogs.slice(0, 100);
-      }
+    if (shouldPersistTranscriptLog(store, input.sourceEvent)) {
+      queueTranscriptLogForPersistence(transcriptLog);
     }
 
     if (matchedLogs.length > 0) {
@@ -5252,6 +5887,95 @@ export async function sendLiveChat(input: {
     pushLiveChatLog(store, liveChatLog);
 
     return liveChatLog;
+  });
+}
+
+export async function sendLiveChatTemplate(
+  id: string,
+): Promise<{
+  template: LiveChatTemplate;
+  liveChatLog: LiveChatLog;
+}> {
+  return mutateStore(async (store) => {
+    const template = store.liveChatTemplates.find((item) => item.id === id);
+
+    if (!template) {
+      throw new Error("Live chat template not found.");
+    }
+
+    const session =
+      findMeetingSessionById(store, template.sessionId) ??
+      ensureDefaultSessionExists(store);
+    const sessionBlockedMessage = getSessionOperationBlockedMessage(session.status);
+    const message = template.message.trim();
+
+    if (!message) {
+      throw new Error("Template message is required.");
+    }
+
+    if (sessionBlockedMessage) {
+      throw new Error(sessionBlockedMessage);
+    }
+
+    const recallBots = store.recallBots.filter((bot) => bot.sessionId === session.id);
+    const senderTargetBuildResult =
+      template.senderMode === "round_robin"
+        ? buildTemplateRoundRobinSenderTargets({
+            botIds: template.botIds,
+            recallBots,
+            roundRobinIndex: template.roundRobinIndex,
+          })
+        : buildLiveChatSenderTargets({
+            senderMode:
+              template.senderMode === "all_bots" ? "all_bots" : "specific_bots",
+            senderBotIds: template.senderMode === "selected_bots" ? template.botIds : [],
+            recallBots,
+            roundRobinIndex: store.liveChatRoundRobinIndex,
+          });
+    const executionResult = await executeSenderTargets({
+      triggerExecutionId: randomUUID(),
+      senderTargets: senderTargetBuildResult.senderTargets,
+      replyMessage: message,
+      sendChatEnabled: isRecallSendChatEnabled(),
+    });
+    const firstFailure = executionResult.senderResults.find(
+      (senderResult) => senderResult.status === "failed",
+    );
+    const status = deriveMatchStatus(executionResult.senderResults);
+    const liveChatLog: LiveChatLog = {
+      id: randomUUID(),
+      sessionId: session.id,
+      message,
+      senderMode:
+        template.senderMode === "all_bots"
+          ? "all_bots"
+          : template.senderMode === "round_robin"
+            ? "round_robin_bots"
+            : "specific_bots",
+      senderBotIdsUsed: senderTargetBuildResult.senderBotIdsUsed,
+      senderResults: executionResult.senderResults,
+      status,
+      createdAt: new Date().toISOString(),
+      errorMessage: firstFailure?.errorMessage ?? null,
+    };
+
+    pushLiveChatLog(store, liveChatLog);
+
+    if (
+      template.senderMode === "round_robin" &&
+      senderTargetBuildResult.chosenRoundRobinBotId
+    ) {
+      template.roundRobinIndex = senderTargetBuildResult.nextRoundRobinIndex;
+      template.lastSentBotId = senderTargetBuildResult.chosenRoundRobinBotId;
+      template.lastSentAt = liveChatLog.createdAt;
+    }
+
+    template.updatedAt = new Date().toISOString();
+
+    return {
+      template: { ...template },
+      liveChatLog,
+    };
   });
 }
 

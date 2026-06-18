@@ -1,5 +1,5 @@
-import { TriggersPageClient } from "@/components/triggers-page-client";
+import { FeatureDisabledPage } from "@/components/feature-disabled-page";
 
 export default function TriggersPage() {
-  return <TriggersPageClient />;
+  return <FeatureDisabledPage title="Triggers" />;
 }

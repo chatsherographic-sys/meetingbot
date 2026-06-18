@@ -31,22 +31,7 @@ type BulkCreateResult = {
     botName: string;
     error: string;
   }>;
-  } | null;
-
-type BotTranscriptDiagnostics = {
-  transcriptFound: boolean;
-  transcriptItemCount: number;
-  latestTranscriptText: string | null;
-  rawResponse: unknown;
-};
-
-type BotDetailsDiagnostics = {
-  botStatus: string;
-  recordingStatus: string | null;
-  transcriptConfig: unknown;
-  realtimeEndpoints: unknown;
-  rawResponse: Record<string, unknown>;
-};
+} | null;
 
 const DEFAULT_BOT_NAME_PREFIX = "ChatsHero AI Assistant";
 
@@ -79,10 +64,6 @@ export function BotsPageClient({
   const [error, setError] = useState<string | null>(null);
   const [botSubmitting, setBotSubmitting] = useState(false);
   const [botActionBotId, setBotActionBotId] = useState<string | null>(null);
-  const [transcriptCheckBotId, setTranscriptCheckBotId] = useState<string | null>(
-    null,
-  );
-  const [detailsCheckBotId, setDetailsCheckBotId] = useState<string | null>(null);
   const [stoppingAllBots, setStoppingAllBots] = useState(false);
   const [deletingHistoryBotId, setDeletingHistoryBotId] = useState<string | null>(
     null,
@@ -90,15 +71,6 @@ export function BotsPageClient({
   const [clearingHistoryBots, setClearingHistoryBots] = useState(false);
   const [botMessage, setBotMessage] = useState<PanelMessage>(null);
   const [bulkCreateResult, setBulkCreateResult] = useState<BulkCreateResult>(null);
-  const [transcriptDiagnosticsByBotId, setTranscriptDiagnosticsByBotId] =
-    useState<Record<string, BotTranscriptDiagnostics>>({});
-  const [transcriptDiagnosticErrorsByBotId, setTranscriptDiagnosticErrorsByBotId] =
-    useState<Record<string, string>>({});
-  const [botDetailsDiagnosticsByBotId, setBotDetailsDiagnosticsByBotId] =
-    useState<Record<string, BotDetailsDiagnostics>>({});
-  const [botDetailsErrorsByBotId, setBotDetailsErrorsByBotId] = useState<
-    Record<string, string>
-  >({});
   const [botIdSearch, setBotIdSearch] = useState("");
   const [botNameSearch, setBotNameSearch] = useState("");
   const [meetingUrlSearch, setMeetingUrlSearch] = useState("");
@@ -465,106 +437,6 @@ export function BotsPageClient({
     }
   }
 
-  async function handleCheckTranscript(botId: string) {
-    setTranscriptCheckBotId(botId);
-    setBotMessage(null);
-    setTranscriptDiagnosticErrorsByBotId((current) => {
-      const next = { ...current };
-      delete next[botId];
-      return next;
-    });
-
-    try {
-      const response = await fetch(`/api/recall/bots/${botId}/transcript`, {
-        method: "GET",
-      });
-      const payload = await readJsonResponse<{
-        error?: string;
-        transcriptDiagnostics?: BotTranscriptDiagnostics;
-      }>(response);
-
-      if (!response.ok || !payload.transcriptDiagnostics) {
-        throw new Error(payload.error ?? "Failed to check bot transcript.");
-      }
-
-      setTranscriptDiagnosticsByBotId((current) => ({
-        ...current,
-        [botId]: payload.transcriptDiagnostics as BotTranscriptDiagnostics,
-      }));
-      setBotMessage({
-        type: "success",
-        text: "Transcript diagnostic loaded.",
-      });
-    } catch (transcriptError) {
-      const message =
-        transcriptError instanceof Error
-          ? transcriptError.message
-          : "Failed to check bot transcript.";
-
-      setTranscriptDiagnosticErrorsByBotId((current) => ({
-        ...current,
-        [botId]: message,
-      }));
-      setBotMessage({
-        type: "error",
-        text: message,
-      });
-    } finally {
-      setTranscriptCheckBotId(null);
-    }
-  }
-
-  async function handleCheckBotDetails(botId: string) {
-    setDetailsCheckBotId(botId);
-    setBotMessage(null);
-    setBotDetailsErrorsByBotId((current) => {
-      const next = { ...current };
-      delete next[botId];
-      return next;
-    });
-
-    try {
-      const response = await fetch(`/api/recall/bots/${botId}/details`, {
-        method: "GET",
-      });
-      const payload = await readJsonResponse<{
-        error?: string;
-        recallBot?: RecallBotRecord;
-        botDetailsDiagnostics?: BotDetailsDiagnostics;
-      }>(response);
-
-      if (!response.ok || !payload.botDetailsDiagnostics) {
-        throw new Error(payload.error ?? "Failed to check bot details.");
-      }
-
-      setBotDetailsDiagnosticsByBotId((current) => ({
-        ...current,
-        [botId]: payload.botDetailsDiagnostics as BotDetailsDiagnostics,
-      }));
-      setBotMessage({
-        type: "success",
-        text: "Bot details diagnostic loaded.",
-      });
-      await loadBots();
-    } catch (detailsError) {
-      const message =
-        detailsError instanceof Error
-          ? detailsError.message
-          : "Failed to check bot details.";
-
-      setBotDetailsErrorsByBotId((current) => ({
-        ...current,
-        [botId]: message,
-      }));
-      setBotMessage({
-        type: "error",
-        text: message,
-      });
-    } finally {
-      setDetailsCheckBotId(null);
-    }
-  }
-
   async function handleStopAllActiveBots() {
     if (activeBots.length === 0) {
       return;
@@ -734,8 +606,9 @@ export function BotsPageClient({
           <div className="card-header">
             <h3>Create Recall Bot</h3>
             <p>
-              Create a Zoom bot that streams transcript events to your webhook
-              endpoint using the current sidebar session.
+              Create Zoom bots for the current sidebar session. Each session
+              keeps one listener bot and uses extra bots as sender-only bots to
+              reduce meeting load.
             </p>
           </div>
           <div className="card-body">
@@ -1179,30 +1052,6 @@ export function BotsPageClient({
                               <button
                                 className="button secondary"
                                 type="button"
-                                disabled={transcriptCheckBotId === bot.recallBotId}
-                                onClick={() =>
-                                  void handleCheckTranscript(bot.recallBotId)
-                                }
-                              >
-                                {transcriptCheckBotId === bot.recallBotId
-                                  ? "Checking..."
-                                  : "Check Transcript"}
-                              </button>
-                              <button
-                                className="button secondary"
-                                type="button"
-                                disabled={detailsCheckBotId === bot.recallBotId}
-                                onClick={() =>
-                                  void handleCheckBotDetails(bot.recallBotId)
-                                }
-                              >
-                                {detailsCheckBotId === bot.recallBotId
-                                  ? "Checking..."
-                                  : "Check Bot Details"}
-                              </button>
-                              <button
-                                className="button secondary"
-                                type="button"
                                 disabled={botActionBotId === bot.recallBotId}
                                 onClick={() => void handleStopBot(bot.recallBotId)}
                               >
@@ -1211,114 +1060,6 @@ export function BotsPageClient({
                                   : "Stop Bot"}
                               </button>
                             </div>
-                            {transcriptDiagnosticErrorsByBotId[bot.recallBotId] ? (
-                              <p className="code error-text">
-                                Transcript check error:{" "}
-                                {
-                                  transcriptDiagnosticErrorsByBotId[
-                                    bot.recallBotId
-                                  ]
-                                }
-                              </p>
-                            ) : null}
-                            {transcriptDiagnosticsByBotId[bot.recallBotId] ? (
-                              <div className="result-block">
-                                <h4>Transcript Diagnostic</h4>
-                                <div className="log-meta">
-                                  <span className="pill">
-                                    Transcript found:{" "}
-                                    {transcriptDiagnosticsByBotId[bot.recallBotId]
-                                      .transcriptFound
-                                      ? "Yes"
-                                      : "No"}
-                                  </span>
-                                  <span className="pill">
-                                    Transcript items:{" "}
-                                    {
-                                      transcriptDiagnosticsByBotId[bot.recallBotId]
-                                        .transcriptItemCount
-                                    }
-                                  </span>
-                                </div>
-                                <p className="code">
-                                  Latest transcript text:{" "}
-                                  {transcriptDiagnosticsByBotId[bot.recallBotId]
-                                    .latestTranscriptText ?? "(none)"}
-                                </p>
-                              </div>
-                            ) : null}
-                            {botDetailsErrorsByBotId[bot.recallBotId] ? (
-                              <p className="code error-text">
-                                Bot details error:{" "}
-                                {botDetailsErrorsByBotId[bot.recallBotId]}
-                              </p>
-                            ) : null}
-                            {botDetailsDiagnosticsByBotId[bot.recallBotId] ? (
-                              <div className="result-block">
-                                <h4>Bot Details Diagnostic</h4>
-                                <div className="log-meta">
-                                  <span className="pill">
-                                    Bot status:{" "}
-                                    {
-                                      botDetailsDiagnosticsByBotId[bot.recallBotId]
-                                        .botStatus
-                                    }
-                                  </span>
-                                  <span className="pill">
-                                    Recording status:{" "}
-                                    {botDetailsDiagnosticsByBotId[bot.recallBotId]
-                                      .recordingStatus ?? "(not available)"}
-                                  </span>
-                                </div>
-                                <p className="code">
-                                  Transcript config:{" "}
-                                  {botDetailsDiagnosticsByBotId[bot.recallBotId]
-                                    .transcriptConfig
-                                    ? "Available"
-                                    : "Missing"}
-                                </p>
-                                <p className="code">
-                                  Realtime endpoints:{" "}
-                                  {botDetailsDiagnosticsByBotId[bot.recallBotId]
-                                    .realtimeEndpoints
-                                    ? "Available"
-                                    : "Missing"}
-                                </p>
-                                <details>
-                                  <summary>View transcript config</summary>
-                                  <pre className="code raw-json">
-                                    {JSON.stringify(
-                                      botDetailsDiagnosticsByBotId[bot.recallBotId]
-                                        .transcriptConfig,
-                                      null,
-                                      2,
-                                    )}
-                                  </pre>
-                                </details>
-                                <details>
-                                  <summary>View realtime endpoint config</summary>
-                                  <pre className="code raw-json">
-                                    {JSON.stringify(
-                                      botDetailsDiagnosticsByBotId[bot.recallBotId]
-                                        .realtimeEndpoints,
-                                      null,
-                                      2,
-                                    )}
-                                  </pre>
-                                </details>
-                                <details>
-                                  <summary>View raw Recall response</summary>
-                                  <pre className="code raw-json">
-                                    {JSON.stringify(
-                                      botDetailsDiagnosticsByBotId[bot.recallBotId]
-                                        .rawResponse,
-                                      null,
-                                      2,
-                                    )}
-                                  </pre>
-                                </details>
-                              </div>
-                            ) : null}
                             <details>
                               <summary>View saved create-bot payload</summary>
                               <pre className="code raw-json">

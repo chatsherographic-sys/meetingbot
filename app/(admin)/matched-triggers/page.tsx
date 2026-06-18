@@ -1,5 +1,5 @@
-import { MatchedTriggersPageClient } from "@/components/matched-triggers-page-client";
+import { FeatureDisabledPage } from "@/components/feature-disabled-page";
 
 export default function MatchedTriggersPage() {
-  return <MatchedTriggersPageClient />;
+  return <FeatureDisabledPage title="Matched Triggers" />;
 }

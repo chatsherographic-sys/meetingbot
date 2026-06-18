@@ -1,5 +1,5 @@
-import { TranscriptsPageClient } from "@/components/transcripts-page-client";
+import { FeatureDisabledPage } from "@/components/feature-disabled-page";
 
 export default function TranscriptsPage() {
-  return <TranscriptsPageClient />;
+  return <FeatureDisabledPage title="Transcripts" />;
 }

@@ -1,5 +1,5 @@
-import { WebhooksPageClient } from "@/components/webhooks-page-client";
+import { FeatureDisabledPage } from "@/components/feature-disabled-page";
 
 export default function WebhooksPage() {
-  return <WebhooksPageClient />;
+  return <FeatureDisabledPage title="Webhooks" />;
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteTriggerRule, updateTriggerRule } from "@/lib/store";
-import type { SenderMode } from "@/lib/types";
+import type { SenderMode, TriggerSlotAliasGroup } from "@/lib/types";
 
 type RouteContext = {
   params: Promise<{
@@ -13,6 +13,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { id } = await context.params;
     const body = (await request.json()) as {
       triggerPhrase?: string;
+      slotAliasGroups?: TriggerSlotAliasGroup[];
       replyMessage?: string;
       cooldownSeconds?: number | string;
       responseDelaySeconds?: number | string;
@@ -24,6 +25,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     const triggerRule = await updateTriggerRule(id, {
       triggerPhrase: body.triggerPhrase,
+      aliases: [],
+      slotAliasGroups: Array.isArray(body.slotAliasGroups)
+        ? body.slotAliasGroups
+        : undefined,
       replyMessage: body.replyMessage,
       cooldownSeconds:
         body.cooldownSeconds === undefined

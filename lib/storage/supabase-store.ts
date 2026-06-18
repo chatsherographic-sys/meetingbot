@@ -131,6 +131,9 @@ function mapStoreToRows(store: StoreData) {
       session_id: rule.sessionId,
       trigger_phrase: rule.triggerPhrase,
       normalized_trigger: rule.normalizedTrigger,
+      aliases: rule.aliases,
+      normalized_aliases: rule.normalizedAliases,
+      slot_alias_groups: rule.slotAliasGroups,
       reply_message: rule.replyMessage,
       cooldown_seconds: rule.cooldownSeconds,
       response_delay_seconds: rule.responseDelaySeconds,
@@ -168,6 +171,7 @@ function mapStoreToRows(store: StoreData) {
       trigger_execution_id: log.triggerExecutionId,
       source_event: log.sourceEvent,
       source_webhook_bot_id: log.sourceWebhookBotId,
+      match_type: log.matchType,
       rule_id: log.ruleId,
       trigger_phrase: log.triggerPhrase,
       reply_message: log.replyMessage,
@@ -220,26 +224,18 @@ function mapStoreToRows(store: StoreData) {
       created_at: log.createdAt,
       error_message: log.errorMessage,
     })),
-    webhook_debug_logs: store.webhookDebugLogs.map((log) => ({
-      id: log.id,
-      session_id: log.sessionId,
-      event_name: log.eventName,
-      raw_payload: log.rawPayload,
-      received_at: log.receivedAt,
-      bot_id: log.botId,
-      status: log.status,
-      extracted_transcript_text: log.extractedTranscriptText,
-      error_message: log.errorMessage,
-    })),
-    transcript_logs: store.transcriptLogs.map((log) => ({
-      id: log.id,
-      session_id: log.sessionId,
-      bot_id: log.botId,
-      transcript_text: log.transcriptText,
-      normalized_transcript_text: log.normalizedTranscriptText,
-      matched_rule_ids: log.matchedRuleIds,
-      source_event: log.sourceEvent,
-      created_at: log.createdAt,
+    live_chat_templates: store.liveChatTemplates.map((template) => ({
+      id: template.id,
+      session_id: template.sessionId,
+      name: template.name,
+      message: template.message,
+      sender_mode: template.senderMode,
+      bot_ids: template.botIds,
+      round_robin_index: template.roundRobinIndex,
+      last_sent_bot_id: template.lastSentBotId,
+      last_sent_at: template.lastSentAt,
+      created_at: template.createdAt,
+      updated_at: template.updatedAt,
     })),
   };
 }
@@ -250,25 +246,15 @@ async function fetchAllTableData(client: SupabaseClient) {
     meetingSessionsResult,
     recallBotsResult,
     scheduledBotJoinsResult,
-    triggerRulesResult,
-    timerTriggersResult,
-    matchedTriggerLogsResult,
-    timerTriggerLogsResult,
     liveChatLogsResult,
-    webhookDebugLogsResult,
-    transcriptLogsResult,
+    liveChatTemplatesResult,
   ] = await Promise.all([
     client.from("settings").select("*").eq("id", SETTINGS_ROW_ID).maybeSingle(),
     client.from("meeting_sessions").select("*"),
     client.from("recall_bots").select("*"),
     client.from("scheduled_bot_joins").select("*"),
-    client.from("trigger_rules").select("*"),
-    client.from("timer_triggers").select("*"),
-    client.from("matched_trigger_logs").select("*"),
-    client.from("timer_trigger_logs").select("*"),
     client.from("live_chat_logs").select("*"),
-    client.from("webhook_debug_logs").select("*"),
-    client.from("transcript_logs").select("*"),
+    client.from("live_chat_templates").select("*"),
   ]);
 
   const results = [
@@ -276,13 +262,8 @@ async function fetchAllTableData(client: SupabaseClient) {
     meetingSessionsResult,
     recallBotsResult,
     scheduledBotJoinsResult,
-    triggerRulesResult,
-    timerTriggersResult,
-    matchedTriggerLogsResult,
-    timerTriggerLogsResult,
     liveChatLogsResult,
-    webhookDebugLogsResult,
-    transcriptLogsResult,
+    liveChatTemplatesResult,
   ];
 
   const failedResult = results.find((result) => result.error);
@@ -296,13 +277,8 @@ async function fetchAllTableData(client: SupabaseClient) {
     meetingSessions: meetingSessionsResult.data ?? [],
     recallBots: recallBotsResult.data ?? [],
     scheduledBotJoins: scheduledBotJoinsResult.data ?? [],
-    triggerRules: triggerRulesResult.data ?? [],
-    timerTriggers: timerTriggersResult.data ?? [],
-    matchedTriggerLogs: matchedTriggerLogsResult.data ?? [],
-    timerTriggerLogs: timerTriggerLogsResult.data ?? [],
     liveChatLogs: liveChatLogsResult.data ?? [],
-    webhookDebugLogs: webhookDebugLogsResult.data ?? [],
-    transcriptLogs: transcriptLogsResult.data ?? [],
+    liveChatTemplates: liveChatTemplatesResult.data ?? [],
   };
 }
 
@@ -447,145 +423,10 @@ export function createSupabaseStoreAdapter(
           createdAt: String(schedule.created_at ?? new Date().toISOString()),
           updatedAt: String(schedule.updated_at ?? new Date().toISOString()),
         })),
-        triggerRules: data.triggerRules.map((rule) => ({
-          id: String(rule.id),
-          sessionId: String(rule.session_id ?? ""),
-          triggerPhrase: String(rule.trigger_phrase ?? ""),
-          normalizedTrigger: String(rule.normalized_trigger ?? ""),
-          replyMessage: String(rule.reply_message ?? ""),
-          cooldownSeconds: Number(rule.cooldown_seconds ?? 0),
-          responseDelaySeconds: Number(rule.response_delay_seconds ?? 0),
-          senderMode: String(rule.sender_mode ?? "round_robin_bots"),
-          senderBotIds: normalizeJsonArray(rule.sender_bot_ids),
-          nextSenderIndex: Number(rule.next_sender_index ?? 0),
-          triggerCount: Number(rule.trigger_count ?? 0),
-          maxTriggerCount:
-            rule.max_trigger_count === null || rule.max_trigger_count === undefined
-              ? null
-              : Number(rule.max_trigger_count),
-          enabled: Boolean(rule.enabled),
-          lastMatchedAt:
-            typeof rule.last_matched_at === "string"
-              ? rule.last_matched_at
-              : null,
-          lastTriggeredAt:
-            typeof rule.last_triggered_at === "string"
-              ? rule.last_triggered_at
-              : null,
-          createdAt: String(rule.created_at ?? new Date().toISOString()),
-        })),
-        timerTriggers: data.timerTriggers.map((trigger) => ({
-          id: String(trigger.id),
-          sessionId: String(trigger.session_id ?? ""),
-          name: String(trigger.name ?? ""),
-          enabled: Boolean(trigger.enabled),
-          delayMinutesAfterJoin: Number(trigger.delay_minutes_after_join ?? 0),
-          message: String(trigger.message ?? ""),
-          senderMode: String(trigger.sender_mode ?? "round_robin_bots"),
-          senderBotIds: normalizeJsonArray(trigger.sender_bot_ids),
-          nextSenderIndex: Number(trigger.next_sender_index ?? 0),
-          responseDelaySeconds: Number(trigger.response_delay_seconds ?? 0),
-          maxTriggerCount:
-            trigger.max_trigger_count === null ||
-            trigger.max_trigger_count === undefined
-              ? null
-              : Number(trigger.max_trigger_count),
-          triggerCount: Number(trigger.trigger_count ?? 0),
-          lastTriggeredAt:
-            typeof trigger.last_triggered_at === "string"
-              ? trigger.last_triggered_at
-              : null,
-          createdAt: String(trigger.created_at ?? new Date().toISOString()),
-          updatedAt: String(trigger.updated_at ?? new Date().toISOString()),
-        })),
-        matchLogs: data.matchedTriggerLogs.map((log) => ({
-          id: String(log.id),
-          sessionId: String(log.session_id ?? ""),
-          botId: typeof log.bot_id === "string" ? log.bot_id : null,
-          triggerExecutionId:
-            typeof log.trigger_execution_id === "string"
-              ? log.trigger_execution_id
-              : null,
-          sourceEvent:
-            log.source_event === "transcript.partial_data"
-              ? "transcript.partial_data"
-              : "transcript.data",
-          sourceWebhookBotId:
-            typeof log.source_webhook_bot_id === "string"
-              ? log.source_webhook_bot_id
-              : null,
-          ruleId: String(log.rule_id ?? ""),
-          triggerPhrase: String(log.trigger_phrase ?? ""),
-          replyMessage: String(log.reply_message ?? ""),
-          transcriptText: String(log.transcript_text ?? ""),
-          normalizedTranscriptText: String(log.normalized_transcript_text ?? ""),
-          createdAt: String(log.created_at ?? new Date().toISOString()),
-          status: String(log.status ?? "dry_run"),
-          senderMode: String(log.sender_mode ?? "round_robin_bots"),
-          senderBotIdsUsed: normalizeJsonArray(log.sender_bot_ids_used),
-          originalSenderBotIds: normalizeJsonArray(log.original_sender_bot_ids),
-          dedupedSenderBotIds: normalizeJsonArray(log.deduped_sender_bot_ids),
-          chosenRoundRobinBotId:
-            typeof log.chosen_round_robin_bot_id === "string"
-              ? log.chosen_round_robin_bot_id
-              : null,
-          chosenRoundRobinBotName:
-            typeof log.chosen_round_robin_bot_name === "string"
-              ? log.chosen_round_robin_bot_name
-              : null,
-          previousRoundRobinIndex:
-            log.previous_round_robin_index === null ||
-            log.previous_round_robin_index === undefined
-              ? null
-              : Number(log.previous_round_robin_index),
-          nextRoundRobinIndex:
-            log.next_round_robin_index === null ||
-            log.next_round_robin_index === undefined
-              ? null
-              : Number(log.next_round_robin_index),
-          responseDelaySeconds: Number(log.response_delay_seconds ?? 0),
-          triggerCountAfter:
-            log.trigger_count_after === null ||
-            log.trigger_count_after === undefined
-              ? null
-              : Number(log.trigger_count_after),
-          maxTriggerCount:
-            log.max_trigger_count === null || log.max_trigger_count === undefined
-              ? null
-              : Number(log.max_trigger_count),
-          autoDisabledAfterTrigger: Boolean(log.auto_disabled_after_trigger),
-          sendAttemptCount: Number(log.send_attempt_count ?? 0),
-          actualSendCount: Number(log.actual_send_count ?? 0),
-          warningMessages: normalizeJsonArray(log.warning_messages),
-          senderResults: normalizeSenderResults(log.sender_results),
-          latencyDiagnostics:
-            log.latency_diagnostics &&
-            typeof log.latency_diagnostics === "object" &&
-            !Array.isArray(log.latency_diagnostics)
-              ? (log.latency_diagnostics as MatchLog["latencyDiagnostics"])
-              : null,
-          errorMessage:
-            typeof log.error_message === "string" ? log.error_message : null,
-          action: String(log.action ?? ""),
-        })),
-        timerTriggerLogs: data.timerTriggerLogs.map((log) => ({
-          id: String(log.id),
-          sessionId: String(log.session_id ?? ""),
-          timerTriggerId: String(log.timer_trigger_id ?? ""),
-          timerTriggerName: String(log.timer_trigger_name ?? ""),
-          scheduledFor: String(log.scheduled_for ?? new Date().toISOString()),
-          executedAt: String(log.executed_at ?? new Date().toISOString()),
-          message: String(log.message ?? ""),
-          senderMode: String(log.sender_mode ?? "round_robin_bots"),
-          senderBotIdUsed:
-            typeof log.sender_bot_id_used === "string"
-              ? log.sender_bot_id_used
-              : null,
-          senderBotIdsUsed: normalizeJsonArray(log.sender_bot_ids_used),
-          status: String(log.status ?? "dry_run"),
-          errorMessage:
-            typeof log.error_message === "string" ? log.error_message : null,
-        })),
+        triggerRules: [],
+        timerTriggers: [],
+        matchLogs: [],
+        timerTriggerLogs: [],
         liveChatLogs: data.liveChatLogs.map((log) => ({
           id: String(log.id),
           sessionId: String(log.session_id ?? ""),
@@ -598,34 +439,32 @@ export function createSupabaseStoreAdapter(
           errorMessage:
             typeof log.error_message === "string" ? log.error_message : null,
         })),
-        webhookDebugLogs: data.webhookDebugLogs.map((log) => ({
-          id: String(log.id),
-          sessionId: String(log.session_id ?? ""),
-          eventName: String(log.event_name ?? ""),
-          rawPayload: log.raw_payload,
-          receivedAt: String(log.received_at ?? new Date().toISOString()),
-          botId: typeof log.bot_id === "string" ? log.bot_id : null,
-          status: String(log.status ?? "unknown"),
-          extractedTranscriptText:
-            typeof log.extracted_transcript_text === "string"
-              ? log.extracted_transcript_text
+        liveChatTemplates: data.liveChatTemplates.map((template) => ({
+          id: String(template.id),
+          sessionId: String(template.session_id ?? ""),
+          name: String(template.name ?? ""),
+          message: String(template.message ?? ""),
+          senderMode:
+            template.sender_mode === "all_bots"
+              ? "all_bots"
+              : template.sender_mode === "round_robin"
+                ? "round_robin"
+                : "selected_bots",
+          botIds: normalizeJsonArray(template.bot_ids),
+          roundRobinIndex: Number(template.round_robin_index ?? 0),
+          lastSentBotId:
+            typeof template.last_sent_bot_id === "string"
+              ? template.last_sent_bot_id
               : null,
-          errorMessage:
-            typeof log.error_message === "string" ? log.error_message : null,
+          lastSentAt:
+            typeof template.last_sent_at === "string"
+              ? template.last_sent_at
+              : null,
+          createdAt: String(template.created_at ?? new Date().toISOString()),
+          updatedAt: String(template.updated_at ?? new Date().toISOString()),
         })),
-        transcriptLogs: data.transcriptLogs.map((log) => ({
-          id: String(log.id),
-          sessionId: String(log.session_id ?? ""),
-          botId: typeof log.bot_id === "string" ? log.bot_id : null,
-          transcriptText: String(log.transcript_text ?? ""),
-          normalizedTranscriptText: String(log.normalized_transcript_text ?? ""),
-          matchedRuleIds: normalizeJsonArray(log.matched_rule_ids),
-          sourceEvent:
-            log.source_event === "transcript.partial_data"
-              ? "transcript.partial_data"
-              : "transcript.data",
-          createdAt: String(log.created_at ?? new Date().toISOString()),
-        })),
+        webhookDebugLogs: [],
+        transcriptLogs: [],
       });
     },
     async writeStore(data) {
@@ -643,13 +482,8 @@ export function createSupabaseStoreAdapter(
       await syncTable(client, "meeting_sessions", rows.meeting_sessions);
       await syncTable(client, "recall_bots", rows.recall_bots);
       await syncTable(client, "scheduled_bot_joins", rows.scheduled_bot_joins);
-      await syncTable(client, "trigger_rules", rows.trigger_rules);
-      await syncTable(client, "timer_triggers", rows.timer_triggers);
-      await syncTable(client, "matched_trigger_logs", rows.matched_trigger_logs);
-      await syncTable(client, "timer_trigger_logs", rows.timer_trigger_logs);
       await syncTable(client, "live_chat_logs", rows.live_chat_logs);
-      await syncTable(client, "webhook_debug_logs", rows.webhook_debug_logs);
-      await syncTable(client, "transcript_logs", rows.transcript_logs);
+      await syncTable(client, "live_chat_templates", rows.live_chat_templates);
     },
   };
 }

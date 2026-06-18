@@ -37,6 +37,7 @@ async function main() {
   console.log(`timerTriggers: ${store.timerTriggers.length}`);
   console.log(`matchLogs: ${store.matchLogs.length}`);
   console.log(`timerTriggerLogs: ${store.timerTriggerLogs.length}`);
+  console.log(`liveChatTemplates: ${store.liveChatTemplates.length}`);
   console.log(`liveChatLogs: ${store.liveChatLogs.length}`);
   console.log(`webhookDebugLogs: ${store.webhookDebugLogs.length}`);
   console.log(`transcriptLogs: ${store.transcriptLogs.length}`);

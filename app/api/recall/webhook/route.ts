@@ -10,7 +10,6 @@ import {
   isStoreCorruptionError,
   findSessionIdForRecallBotId,
   getAppSettings,
-  processTranscriptWebhook,
   saveWebhookDebugLog,
 } from "@/lib/store";
 
@@ -36,18 +35,10 @@ export async function POST(request: Request) {
       (await getAppSettings()).storageLoggingMode === "debug";
 
     if (isTranscriptProcessingEvent(eventName)) {
-      await processTranscriptWebhook({
-        sessionId: sessionId ?? undefined,
-        botId,
-        transcriptText: extractedTranscriptText ?? "",
-        sourceEvent: eventName,
-        webhookReceivedAt: receivedAt,
-        transcriptExtractedAt,
-      });
-
-      // Storage / Logging Mode should only affect what gets persisted.
-      // Transcript extraction, trigger matching, cooldowns, dedupe, and chat send
-      // behavior must still run for transcript events in production_minimal mode.
+      // The simplified live chat sender no longer performs transcript-trigger
+      // matching in the webhook path. We keep the endpoint available so existing
+      // Recall bot configs do not fail, and we only persist debug records when
+      // the app is explicitly running in debug storage mode.
       if (shouldPersistNormalWebhookLogs) {
         await saveWebhookDebugLog({
           sessionId: sessionId ?? "default-session",
@@ -55,13 +46,13 @@ export async function POST(request: Request) {
           rawPayload,
           receivedAt,
           botId,
-          status: "processed",
+          status: "ignored",
           extractedTranscriptText,
           errorMessage: null,
         });
       }
 
-      return NextResponse.json({ ok: true, status: "processed" });
+      return NextResponse.json({ ok: true, status: "ignored" });
     }
 
     if (ignoredWebhookEvents.has(eventName)) {

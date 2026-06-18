@@ -1,5 +1,5 @@
-import { TimerTriggersPageClient } from "@/components/timer-triggers-page-client";
+import { FeatureDisabledPage } from "@/components/feature-disabled-page";
 
 export default function TimerTriggersPage() {
-  return <TimerTriggersPageClient />;
+  return <FeatureDisabledPage title="Timer Triggers" />;
 }

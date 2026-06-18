@@ -18,6 +18,9 @@ npm.cmd run build
 ```text
 supabase/migrations/001_initial_schema.sql
 supabase/migrations/002_recall_bot_roles.sql
+supabase/migrations/003_match_log_latency_diagnostics.sql
+supabase/migrations/004_trigger_rule_aliases.sql
+supabase/migrations/005_trigger_slot_alias_groups.sql
 ```
 
 The migration keeps RLS enabled and adds the required `service_role` grants for
@@ -41,6 +44,8 @@ RECALL_REGION=us-west-2
 RECALL_SEND_CHAT_ENABLED=false
 PUBLIC_WEBHOOK_BASE_URL=https://your-vercel-domain.vercel.app
 VERCEL_AUTOMATION_BYPASS_SECRET=
+OPENAI_API_KEY=
+OPENAI_ALIAS_MODEL=gpt-5-nano
 ```
 
 Important notes:
@@ -49,6 +54,8 @@ Important notes:
 - Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
 - `NEXT_PUBLIC_SUPABASE_URL` is safe for the browser, but the service role key is not.
 - `RECALL_API_KEY` must stay server-side only.
+- `OPENAI_API_KEY` is optional, must stay server-side only, and is used only for alias suggestions from `/triggers`.
+- `OPENAI_ALIAS_MODEL` is optional and defaults to `gpt-5-nano`.
 - Recommended production bot setup is one listener bot per meeting and extra sender-only bots only when needed.
 - Listener bots include transcript config and webhook delivery.
 - Sender bots join the meeting and can send chat, but they do not transcribe.
@@ -56,6 +63,7 @@ Important notes:
 - If Vercel Authentication stays enabled, set `VERCEL_AUTOMATION_BYPASS_SECRET` so Recall can reach the protected webhook endpoint.
 - If the bypass secret changes, redeploy and create a new bot because existing bots keep the old webhook URL.
 - Bot transcript language is currently locked to `Chinese (zh-CN)` for new manual and scheduled bot creation.
+- OpenAI alias suggestion does not affect live Recall webhook performance because it is never used in `/api/recall/webhook`.
 
 ## Supabase Export And Verification
 
