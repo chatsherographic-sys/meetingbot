@@ -914,17 +914,8 @@ function normalizeRecallBotRole(
     rawRecallResponse?: Record<string, unknown>;
   },
 ): RecallBotRole {
-  if (value === "listener" || value === "sender") {
-    return value;
-  }
-
-  if (
-    hasTranscriptConfig(input?.createRequestPayload) ||
-    hasTranscriptConfig(input?.rawRecallResponse)
-  ) {
-    return "listener";
-  }
-
+  void value;
+  void input;
   return "sender";
 }
 
@@ -2744,7 +2735,9 @@ function appendRecallBotRecordToStore(
     throw new Error("Recall create bot response did not include a bot ID.");
   }
 
-  const webhookUrl = getRecallWebhookUrl();
+  const webhookUrl = hasTranscriptConfig(input.createRequestPayload)
+    ? getRecallWebhookUrl()
+    : "";
   const requestedSessionId = normalizeSessionIdInput(input.sessionId);
   const sessionId =
     findMeetingSessionById(store, requestedSessionId)?.id ??
@@ -5735,47 +5728,34 @@ export async function runDueScheduledBotJoins(): Promise<{
 
       const createdBotIds: string[] = [];
       const errors: string[] = [];
-      let sessionHasActiveListener = store.recallBots.some(
-        (bot) =>
-          bot.sessionId === scheduledBotJoin.sessionId &&
-          isActiveListenerRecallBot(bot),
-      );
-      let listenerCreatedInRun = false;
 
       for (let index = 0; index < scheduledBotJoin.botNames.length; index += 1) {
         const botName = scheduledBotJoin.botNames[index];
-        const role: RecallBotRole =
-          sessionHasActiveListener || listenerCreatedInRun ? "sender" : "listener";
 
         try {
           const createRequestPayload = buildCreateRecallBotPayload({
             meetingUrl,
             botName,
             transcriptLanguage: scheduledBotJoin.transcriptLanguage,
-            role,
+            role: "sender",
           });
           const rawRecallResponse = await createRecallBot({
             meetingUrl,
             botName,
             transcriptLanguage: scheduledBotJoin.transcriptLanguage,
-            role,
+            role: "sender",
           });
           const recallBotRecord = appendRecallBotRecordToStore(store, {
             sessionId: scheduledBotJoin.sessionId,
             meetingUrl,
             botName,
-            role,
+            role: "sender",
             transcriptLanguage: scheduledBotJoin.transcriptLanguage,
             createRequestPayload,
             rawRecallResponse,
           });
 
           createdBotIds.push(recallBotRecord.recallBotId);
-
-          if (role === "listener") {
-            sessionHasActiveListener = true;
-            listenerCreatedInRun = true;
-          }
         } catch (error) {
           errors.push(
             `Bot ${index + 1} (${botName}): ${

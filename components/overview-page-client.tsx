@@ -283,7 +283,6 @@ export function OverviewPageClient() {
                       <span className={`pill status-${isBotActiveStatus(bot.status) ? "sent" : "unknown"}`}>
                         {bot.status}
                       </span>
-                      <span className="pill">Role: {bot.role}</span>
                       <span className="pill">{formatTime(bot.createdAt)}</span>
                     </div>
                     <p className="code">{bot.recallBotId}</p>

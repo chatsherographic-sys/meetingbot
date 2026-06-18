@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Recall Zoom Bot Control Panel",
-  description: "Local MVP for Recall.ai transcript trigger testing",
+  description: "Local MVP for Recall.ai live Zoom chat sending",
 };
 
 export default function RootLayout({

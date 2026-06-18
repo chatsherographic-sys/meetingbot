@@ -7,11 +7,10 @@ import {
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
 import {
   getMeetingSessionById,
-  hasActiveListenerBotBySession,
   saveRecallBotRecord,
 } from "@/lib/store";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
-import type { RecallBotRecord, RecallBotRole } from "@/lib/types";
+import type { RecallBotRecord } from "@/lib/types";
 
 const DEFAULT_BOT_NAME = "ChatsHero AI Assistant";
 const MIN_BOT_COUNT = 1;
@@ -141,50 +140,34 @@ export async function POST(request: Request) {
     const botNamePrefix =
       (body.botNamePrefix ?? body.botName ?? DEFAULT_BOT_NAME).trim() ||
       DEFAULT_BOT_NAME;
-    const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
+    const transcriptLanguage = "";
     const botCount = ensureValidBotCount(body.botCount);
     const botNames = ensureValidBotNames(body.botNames, botNamePrefix, botCount);
-    let sessionHasActiveListener = await hasActiveListenerBotBySession(sessionId);
-    let listenerCreatedInRequest = false;
-
-    const getNextBotRole = (): RecallBotRole => {
-      if (sessionHasActiveListener || listenerCreatedInRequest) {
-        return "sender";
-      }
-
-      return "listener";
-    };
 
     if (botCount === 1) {
-      const role = getNextBotRole();
       const createRequestPayload = buildCreateRecallBotPayload({
         meetingUrl,
         botName: botNames[0],
-        transcriptLanguage,
-        role,
+        transcriptLanguage: FIXED_TRANSCRIPT_LANGUAGE,
+        role: "sender",
         maskAutomationBypassSecret: true,
       });
       const rawRecallResponse = await createRecallBot({
         meetingUrl,
         botName: botNames[0],
-        transcriptLanguage,
-        role,
+        transcriptLanguage: FIXED_TRANSCRIPT_LANGUAGE,
+        role: "sender",
       });
 
       const recallBot = await saveRecallBotRecord({
         sessionId,
         meetingUrl,
         botName: botNames[0],
-        role,
+        role: "sender",
         transcriptLanguage,
         createRequestPayload,
         rawRecallResponse,
       });
-
-      if (role === "listener") {
-        sessionHasActiveListener = true;
-        listenerCreatedInRequest = true;
-      }
 
       return NextResponse.json({ recallBot }, { status: 201 });
     }
@@ -194,28 +177,27 @@ export async function POST(request: Request) {
 
     for (let index = 0; index < botCount; index += 1) {
       const botName = botNames[index];
-      const role = getNextBotRole();
 
       try {
         const createRequestPayload = buildCreateRecallBotPayload({
           meetingUrl,
           botName,
-          transcriptLanguage,
-          role,
+          transcriptLanguage: FIXED_TRANSCRIPT_LANGUAGE,
+          role: "sender",
           maskAutomationBypassSecret: true,
         });
         const rawRecallResponse = await createRecallBot({
           meetingUrl,
           botName,
-          transcriptLanguage,
-          role,
+          transcriptLanguage: FIXED_TRANSCRIPT_LANGUAGE,
+          role: "sender",
         });
 
         const recallBot = await saveRecallBotRecord({
           sessionId,
           meetingUrl,
           botName,
-          role,
+          role: "sender",
           transcriptLanguage,
           createRequestPayload,
           rawRecallResponse,
@@ -225,11 +207,6 @@ export async function POST(request: Request) {
           index: index + 1,
           recallBot,
         });
-
-        if (role === "listener") {
-          sessionHasActiveListener = true;
-          listenerCreatedInRequest = true;
-        }
       } catch (error) {
         failedAttempts.push({
           index: index + 1,

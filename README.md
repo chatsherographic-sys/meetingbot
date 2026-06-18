@@ -21,6 +21,7 @@ Transcript-trigger automation, ASR matching, and webhook-driven trigger pages ar
 
 - Meeting Sessions
 - Recall bot creation and bot history
+- all newly created bots are sender-only bots
 - bot status refresh
 - stop one bot
 - stop all active bots in the current session
@@ -148,16 +149,14 @@ Session behavior:
 
 ## Bot Roles
 
-Each session normally uses one listener bot.
+The simplified live-chat-only product now treats all bots as sender bots.
 
 Behavior:
 
-- if a session has no active listener, the first newly created bot becomes `listener`
-- extra bots become `sender`
-- if a listener is already active in that session, new bots default to `sender`
-- scheduled joins follow the same server-side rule at run time
-
-This reduces duplicated transcription load when multiple bots join the same Zoom meeting.
+- manual bot creation creates sender bots only
+- scheduled bot joins create sender bots only
+- existing older listener records are treated as sender bots in the UI and live chat eligibility
+- live chat sender selection only depends on bot activity/status, not listener/sender role
 
 ## Live Chat Templates
 

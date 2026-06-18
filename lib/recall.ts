@@ -1,4 +1,3 @@
-import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import type { RecallBotRole } from "@/lib/types";
 
 function getRequiredEnvVar(name: "RECALL_API_KEY" | "RECALL_REGION"): string {
@@ -167,16 +166,6 @@ export function getRecallPreflight(): {
     errors.push("RECALL_REGION is not set.");
   }
 
-  if (!publicWebhookBaseUrl) {
-    errors.push("PUBLIC_WEBHOOK_BASE_URL is not set.");
-  }
-
-  if (isLocalWebhookBaseUrl(normalizedBaseUrl)) {
-    warnings.push(
-      "PUBLIC_WEBHOOK_BASE_URL points to localhost. Real Recall webhooks cannot reach localhost directly.",
-    );
-  }
-
   return {
     recallApiKeyConfigured: Boolean(recallApiKey),
     recallRegionConfigured: Boolean(recallRegion),
@@ -227,11 +216,6 @@ export function buildCreateRecallBotPayload(input: {
   role?: RecallBotRole;
   maskAutomationBypassSecret?: boolean;
 }): Record<string, unknown> {
-  const webhookUrl = input.maskAutomationBypassSecret
-    ? getRecallWebhookUrl()
-    : getRecallWebhookUrlForRecall();
-  const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
-  const role = input.role ?? "listener";
   const payload: Record<string, unknown> = {
     meeting_url: input.meetingUrl,
     bot_name: input.botName,
@@ -242,29 +226,6 @@ export function buildCreateRecallBotPayload(input: {
       },
     },
   };
-
-  if (role === "listener") {
-    payload.recording_config = {
-      transcript: {
-        provider: {
-          deepgram_streaming: {
-            model: "nova-3",
-            language: transcriptLanguage,
-          },
-        },
-        diarization: {
-          use_separate_streams_when_available: true,
-        },
-      },
-      realtime_endpoints: [
-        {
-          type: "webhook",
-          url: webhookUrl,
-          events: ["transcript.data", "transcript.partial_data"],
-        },
-      ],
-    };
-  }
 
   return payload;
 }

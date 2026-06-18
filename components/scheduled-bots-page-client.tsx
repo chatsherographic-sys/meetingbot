@@ -15,10 +15,8 @@ import {
   type PanelMessage,
 } from "@/components/control-panel-client";
 import { useMeetingSession } from "@/components/meeting-session-context";
-import { isBotActiveStatus } from "@/lib/bot-status";
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
-import { FIXED_TRANSCRIPT_LANGUAGE_LABEL } from "@/lib/transcript-language";
-import type { RecallBotRecord, ScheduledBotJoin } from "@/lib/types";
+import type { ScheduledBotJoin } from "@/lib/types";
 
 type ScheduledBotJoinFormState = {
   sessionId: string;
@@ -122,8 +120,6 @@ export function ScheduledBotsPageClient({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<PanelMessage>(null);
-  const [currentSessionHasActiveListener, setCurrentSessionHasActiveListener] =
-    useState(false);
   const [lastAutoRunTime, setLastAutoRunTime] = useState<string | null>(null);
   const [lastAutoRunResult, setLastAutoRunResult] =
     useState<RunDueScheduledBotsResult>(null);
@@ -194,38 +190,22 @@ export function ScheduledBotsPageClient({
   }, [editingScheduleForm.botCount]);
 
   async function loadScheduledBotJoins() {
-    const [schedulesResponse, botsResponse] = await Promise.all([
-      fetch(
-        `/api/scheduled-bots?pageSize=200&sessionId=${encodeURIComponent(currentSessionId)}`,
-        {
-          cache: "no-store",
-        },
-      ),
-      fetch(
-        `/api/recall/bots?pageSize=200&sessionId=${encodeURIComponent(currentSessionId)}`,
-        {
-          cache: "no-store",
-        },
-      ),
-    ]);
+    const schedulesResponse = await fetch(
+      `/api/scheduled-bots?pageSize=200&sessionId=${encodeURIComponent(currentSessionId)}`,
+      {
+        cache: "no-store",
+      },
+    );
 
-    if (!schedulesResponse.ok || !botsResponse.ok) {
+    if (!schedulesResponse.ok) {
       throw new Error("Failed to load scheduled bot joins.");
     }
 
     const payload = await readJsonResponse<{
       scheduledBotJoins: ScheduledBotJoin[];
     }>(schedulesResponse);
-    const botsPayload = await readJsonResponse<{
-      recallBots: RecallBotRecord[];
-    }>(botsResponse);
 
     setScheduledBotJoins(payload.scheduledBotJoins);
-    setCurrentSessionHasActiveListener(
-      botsPayload.recallBots.some(
-        (bot) => isBotActiveStatus(bot.status) && bot.role === "listener",
-      ),
-    );
     setError(null);
   }
 
@@ -701,17 +681,6 @@ export function ScheduledBotsPageClient({
                 setScheduleForm,
                 "create-scheduled-bots",
               )}
-              <div className="field">
-                <label htmlFor="scheduled-bot-language">Transcript language</label>
-                <input
-                  id="scheduled-bot-language"
-                  value={FIXED_TRANSCRIPT_LANGUAGE_LABEL}
-                  readOnly
-                />
-                <p className="helper-text">
-                  New scheduled joins always create bots with Chinese transcription.
-                </p>
-              </div>
               <label className="choice-item">
                 <input
                   type="checkbox"
@@ -743,20 +712,9 @@ export function ScheduledBotsPageClient({
               </div>
             </form>
             <p className="helper-text">
-              The first scheduled bot becomes the listener that transcribes.
-              Extra scheduled bots are sender-only to reduce duplicate
-              transcript load.
+              All scheduled bots are sender bots for the simplified live chat
+              workflow.
             </p>
-            <p className="helper-text">
-              At run time, the schedule will only create a listener if the
-              session does not already have one.
-            </p>
-            {currentSessionHasActiveListener ? (
-              <p className="helper-text">
-                This session already has an active listener, so due schedules
-                will create sender-only bots.
-              </p>
-            ) : null}
           </div>
         </section>
 
@@ -830,7 +788,7 @@ export function ScheduledBotsPageClient({
               ) : null}
               <ul className="helper-list">
                 <li>Scheduled joins use the session Zoom URL automatically.</li>
-                <li>First bot listens and transcribes. Extra bots join as sender-only.</li>
+                <li>Scheduled bots join the meeting so they can send live Zoom chat later.</li>
                 <li>If a schedule becomes due while this page is open, it runs on the next 10 second check.</li>
                 <li>Production should replace page-open auto-run with cron or a worker.</li>
               </ul>
@@ -996,18 +954,6 @@ export function ScheduledBotsPageClient({
                             setEditingScheduleForm,
                             `edit-scheduled-bots-${schedule.id}`,
                           )}
-                          <div className="field">
-                            <label
-                              htmlFor={`edit-scheduled-language-${schedule.id}`}
-                            >
-                              Transcript language
-                            </label>
-                            <input
-                              id={`edit-scheduled-language-${schedule.id}`}
-                              value={FIXED_TRANSCRIPT_LANGUAGE_LABEL}
-                              readOnly
-                            />
-                          </div>
                           <label className="choice-item">
                             <input
                               type="checkbox"
@@ -1075,9 +1021,6 @@ export function ScheduledBotsPageClient({
                             </span>
                           </div>
                           <div className="code-block">
-                            <p className="code">
-                              Transcript language: {schedule.transcriptLanguage}
-                            </p>
                             <p className="code">
                               Bot names: {schedule.botNames.join(", ")}
                             </p>

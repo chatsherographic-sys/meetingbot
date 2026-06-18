@@ -12,11 +12,9 @@ import {
 import { useMeetingSession } from "@/components/meeting-session-context";
 import { isBotActiveStatus } from "@/lib/bot-status";
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
-import { FIXED_TRANSCRIPT_LANGUAGE_LABEL } from "@/lib/transcript-language";
 import type { RecallBotRecord } from "@/lib/types";
 
 type BotsPageClientProps = {
-  webhookUrl: string;
   preflightErrors: string[];
   preflightWarnings: string[];
 };
@@ -51,15 +49,12 @@ function buildDefaultBotNames(prefix: string, count: number): string[] {
 }
 
 export function BotsPageClient({
-  webhookUrl,
   preflightErrors,
   preflightWarnings,
 }: BotsPageClientProps) {
   const { currentSession, currentSessionId } = useMeetingSession();
   const [bots, setBots] = useState<RecallBotRecord[]>([]);
   const [hasRefreshableBots, setHasRefreshableBots] = useState(false);
-  const [currentSessionHasActiveListener, setCurrentSessionHasActiveListener] =
-    useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [botSubmitting, setBotSubmitting] = useState(false);
@@ -175,11 +170,6 @@ export function BotsPageClient({
     }>(allBotsResponse);
 
     setBots(filteredPayload.recallBots);
-    setCurrentSessionHasActiveListener(
-      allBotsPayload.recallBots.some(
-        (bot) => isBotActiveStatus(bot.status) && bot.role === "listener",
-      ),
-    );
     setHasRefreshableBots(
       allBotsPayload.recallBots.some((bot) => isBotActiveStatus(bot.status)),
     );
@@ -606,45 +596,30 @@ export function BotsPageClient({
           <div className="card-header">
             <h3>Create Recall Bot</h3>
             <p>
-              Create Zoom bots for the current sidebar session. Each session
-              keeps one listener bot and uses extra bots as sender-only bots to
-              reduce meeting load.
+              Create Zoom bots for the current sidebar session. Bots join the
+              meeting so they can send Zoom chat messages when you use live chat
+              templates.
             </p>
           </div>
           <div className="card-body">
             <form className="form" onSubmit={handleCreateBotSubmit}>
-              <div className="field-grid-2">
-                <div className="field">
-                  <label htmlFor="botCount">Number of Bots</label>
-                  <input
-                    id="botCount"
-                    type="number"
-                    min="1"
-                    max="20"
-                    step="1"
-                    value={botForm.botCount}
-                    onChange={(event) =>
-                      setBotForm((current) => ({
-                        ...current,
-                        botCount: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="transcriptLanguageLocked">
-                    Transcript Language
-                  </label>
-                  <input
-                    id="transcriptLanguageLocked"
-                    value={FIXED_TRANSCRIPT_LANGUAGE_LABEL}
-                    readOnly
-                  />
-                  <p className="helper-text">
-                    New bots are locked to Chinese transcription for now.
-                  </p>
-                </div>
+              <div className="field">
+                <label htmlFor="botCount">Number of Bots</label>
+                <input
+                  id="botCount"
+                  type="number"
+                  min="1"
+                  max="20"
+                  step="1"
+                  value={botForm.botCount}
+                  onChange={(event) =>
+                    setBotForm((current) => ({
+                      ...current,
+                      botCount: event.target.value,
+                    }))
+                  }
+                  required
+                />
               </div>
 
               {Number(botForm.botCount) <= 1 ? (
@@ -704,26 +679,10 @@ export function BotsPageClient({
                   </div>
                 </>
               )}
-
-              <div className="field">
-                <label htmlFor="webhookUrl">Webhook URL Preview</label>
-                <input id="webhookUrl" value={webhookUrl} readOnly />
-              </div>
               <p className="helper-text">
-                Each session uses one listener bot. Extra bots are sender-only
-                to reduce delay.
+                All newly created bots are sender bots for the simplified live
+                chat workflow.
               </p>
-              {currentSessionHasActiveListener ? (
-                <p className="helper-text">
-                  This session already has a listener. New bots will be
-                  sender-only.
-                </p>
-              ) : (
-                <p className="helper-text">
-                  This session has no active listener yet. The first successful
-                  new bot will become the listener.
-                </p>
-              )}
 
               <div className="actions">
                 <button
@@ -762,9 +721,6 @@ export function BotsPageClient({
                             <span className="pill">Attempt: {result.index}</span>
                             <span className="pill">
                               Bot ID: {result.recallBot.recallBotId}
-                            </span>
-                            <span className="pill">
-                              Role: {result.recallBot.role}
                             </span>
                             <span className="pill">
                               Status: {result.recallBot.status}
@@ -826,10 +782,6 @@ export function BotsPageClient({
                   <span className="setting-value">
                     {currentSession?.zoomUrl || "(empty)"}
                   </span>
-                </div>
-                <div className="setting-item">
-                  <span className="setting-label">Webhook URL Preview</span>
-                  <span className="setting-value">{webhookUrl}</span>
                 </div>
               </div>
             </div>
@@ -984,7 +936,6 @@ export function BotsPageClient({
                             <h3>{bot.botName}</h3>
                             <div className="log-meta">
                               <span className="pill">Bot ID: {bot.recallBotId}</span>
-                              <span className="pill">Role: {bot.role}</span>
                               <span className="pill">Status: {bot.status}</span>
                               <span className="pill">{formatTime(bot.createdAt)}</span>
                             </div>
@@ -999,10 +950,6 @@ export function BotsPageClient({
                               {bot.joinedAt ? formatTime(bot.joinedAt) : "Not set"}
                             </p>
                             <p className="code">Meeting URL: {bot.meetingUrl}</p>
-                            <p className="code">
-                              Transcript language: {bot.transcriptLanguage}
-                            </p>
-                            <p className="code">Webhook URL: {bot.webhookUrl}</p>
                             {bot.lastErrorMessage ? (
                               <p className="code error-text">
                                 Error: {bot.lastErrorMessage}
@@ -1097,7 +1044,6 @@ export function BotsPageClient({
                             <h3>{bot.botName}</h3>
                             <div className="log-meta">
                               <span className="pill">Bot ID: {bot.recallBotId}</span>
-                              <span className="pill">Role: {bot.role}</span>
                               <span className="pill">Status: {bot.status}</span>
                               <span className="pill">{formatTime(bot.createdAt)}</span>
                             </div>
@@ -1112,10 +1058,6 @@ export function BotsPageClient({
                               {bot.joinedAt ? formatTime(bot.joinedAt) : "Not set"}
                             </p>
                             <p className="code">Meeting URL: {bot.meetingUrl}</p>
-                            <p className="code">
-                              Transcript language: {bot.transcriptLanguage}
-                            </p>
-                            <p className="code">Webhook URL: {bot.webhookUrl}</p>
                             {bot.lastErrorMessage ? (
                               <p className="code error-text">
                                 Error: {bot.lastErrorMessage}
