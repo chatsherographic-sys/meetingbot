@@ -3,6 +3,8 @@ export type SenderMode =
   | "round_robin_bots"
   | "all_bots";
 
+export type RecallBotRole = "listener" | "sender";
+
 export type StorageLoggingMode = "production_minimal" | "debug";
 
 export type MeetingSessionStatus = "draft" | "active" | "ended" | "archived";
@@ -134,6 +136,7 @@ export type RecallBotRecord = {
   recallBotId: string;
   meetingUrl: string;
   botName: string;
+  role: RecallBotRole;
   transcriptLanguage: string;
   webhookUrl: string;
   status: string;

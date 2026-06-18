@@ -600,7 +600,10 @@ export function ScheduledBotsPageClient({
         <section className="card">
           <div className="card-header">
             <h3>Create Scheduled Bot Join</h3>
-            <p>Schedule bots to be created automatically at a specific date and time.</p>
+            <p>
+              Schedule bots to be created automatically at a specific date and
+              time.
+            </p>
           </div>
           <div className="card-body">
             <form className="form" onSubmit={handleCreateScheduledBotJoin}>
@@ -714,6 +717,11 @@ export function ScheduledBotsPageClient({
                 </button>
               </div>
             </form>
+            <p className="helper-text">
+              The first scheduled bot becomes the listener that transcribes.
+              Extra scheduled bots are sender-only to reduce duplicate
+              transcript load.
+            </p>
           </div>
         </section>
 
@@ -787,6 +795,7 @@ export function ScheduledBotsPageClient({
               ) : null}
               <ul className="helper-list">
                 <li>Scheduled joins use the session Zoom URL automatically.</li>
+                <li>First bot listens and transcribes. Extra bots join as sender-only.</li>
                 <li>If a schedule becomes due while this page is open, it runs on the next 10 second check.</li>
                 <li>Production should replace page-open auto-run with cron or a worker.</li>
               </ul>

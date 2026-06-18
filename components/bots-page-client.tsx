@@ -820,6 +820,11 @@ export function BotsPageClient({
                 <label htmlFor="webhookUrl">Webhook URL Preview</label>
                 <input id="webhookUrl" value={webhookUrl} readOnly />
               </div>
+              <p className="helper-text">
+                The first bot is created as the listener that transcribes audio.
+                Extra bots are sender-only so they can still send chat without
+                duplicating transcript load.
+              </p>
 
               <div className="actions">
                 <button
@@ -858,6 +863,9 @@ export function BotsPageClient({
                             <span className="pill">Attempt: {result.index}</span>
                             <span className="pill">
                               Bot ID: {result.recallBot.recallBotId}
+                            </span>
+                            <span className="pill">
+                              Role: {result.recallBot.role}
                             </span>
                             <span className="pill">
                               Status: {result.recallBot.status}
@@ -1077,6 +1085,7 @@ export function BotsPageClient({
                             <h3>{bot.botName}</h3>
                             <div className="log-meta">
                               <span className="pill">Bot ID: {bot.recallBotId}</span>
+                              <span className="pill">Role: {bot.role}</span>
                               <span className="pill">Status: {bot.status}</span>
                               <span className="pill">{formatTime(bot.createdAt)}</span>
                             </div>
@@ -1321,6 +1330,7 @@ export function BotsPageClient({
                             <h3>{bot.botName}</h3>
                             <div className="log-meta">
                               <span className="pill">Bot ID: {bot.recallBotId}</span>
+                              <span className="pill">Role: {bot.role}</span>
                               <span className="pill">Status: {bot.status}</span>
                               <span className="pill">{formatTime(bot.createdAt)}</span>
                             </div>

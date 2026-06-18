@@ -7,7 +7,7 @@ import {
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
 import { getMeetingSessionById, saveRecallBotRecord } from "@/lib/store";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
-import type { RecallBotRecord } from "@/lib/types";
+import type { RecallBotRecord, RecallBotRole } from "@/lib/types";
 
 const DEFAULT_BOT_NAME = "ChatsHero AI Assistant";
 const MIN_BOT_COUNT = 1;
@@ -90,6 +90,10 @@ function ensureValidBotNames(
   });
 }
 
+function getBotRoleForIndex(index: number): RecallBotRole {
+  return index === 0 ? "listener" : "sender";
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -142,22 +146,26 @@ export async function POST(request: Request) {
     const botNames = ensureValidBotNames(body.botNames, botNamePrefix, botCount);
 
     if (botCount === 1) {
+      const role = getBotRoleForIndex(0);
       const createRequestPayload = buildCreateRecallBotPayload({
         meetingUrl,
         botName: botNames[0],
         transcriptLanguage,
+        role,
         maskAutomationBypassSecret: true,
       });
       const rawRecallResponse = await createRecallBot({
         meetingUrl,
         botName: botNames[0],
         transcriptLanguage,
+        role,
       });
 
       const recallBot = await saveRecallBotRecord({
         sessionId,
         meetingUrl,
         botName: botNames[0],
+        role,
         transcriptLanguage,
         createRequestPayload,
         rawRecallResponse,
@@ -171,24 +179,28 @@ export async function POST(request: Request) {
 
     for (let index = 0; index < botCount; index += 1) {
       const botName = botNames[index];
+      const role = getBotRoleForIndex(index);
 
       try {
         const createRequestPayload = buildCreateRecallBotPayload({
           meetingUrl,
           botName,
           transcriptLanguage,
+          role,
           maskAutomationBypassSecret: true,
         });
         const rawRecallResponse = await createRecallBot({
           meetingUrl,
           botName,
           transcriptLanguage,
+          role,
         });
 
         const recallBot = await saveRecallBotRecord({
           sessionId,
           meetingUrl,
           botName,
+          role,
           transcriptLanguage,
           createRequestPayload,
           rawRecallResponse,

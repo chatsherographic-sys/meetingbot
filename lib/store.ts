@@ -13,6 +13,7 @@ import {
 } from "@/lib/recall";
 import { createStorageAdapter } from "@/lib/storage";
 import { getStorageDriver } from "@/lib/storage/config";
+import { createSupabaseServiceRoleClient } from "@/lib/storage/supabase-store";
 import { getSessionOperationBlockedMessage, isSessionActiveForOperations } from "@/lib/session-operations";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import type {
@@ -23,6 +24,7 @@ import type {
   MatchSenderResult,
   PaginatedResult,
   RecallBotRecord,
+  RecallBotRole,
   ScheduledBotJoin,
   ScheduledBotJoinStatus,
   SenderMode,
@@ -711,12 +713,27 @@ function migrateMatchLog(rawLog: LegacyMatchLog): MatchLog {
 }
 
 function migrateRecallBotRecord(rawRecord: LegacyRecallBotRecord): RecallBotRecord {
+  const createRequestPayload =
+    rawRecord.createRequestPayload &&
+    typeof rawRecord.createRequestPayload === "object" &&
+    !Array.isArray(rawRecord.createRequestPayload)
+      ? (rawRecord.createRequestPayload as Record<string, unknown>)
+      : {};
+  const rawRecallResponse =
+    rawRecord.rawRecallResponse && typeof rawRecord.rawRecallResponse === "object"
+      ? (rawRecord.rawRecallResponse as Record<string, unknown>)
+      : {};
+
   return {
     id: String(rawRecord.id ?? randomUUID()),
     sessionId: DEFAULT_SESSION_ID,
     recallBotId: String(rawRecord.recallBotId ?? "").trim(),
     meetingUrl: String(rawRecord.meetingUrl ?? "").trim(),
     botName: String(rawRecord.botName ?? "").trim(),
+    role: normalizeRecallBotRole(rawRecord.role, {
+      createRequestPayload,
+      rawRecallResponse,
+    }),
     transcriptLanguage: String(rawRecord.transcriptLanguage ?? "").trim(),
     webhookUrl: String(rawRecord.webhookUrl ?? "").trim(),
     status: String(rawRecord.status ?? "created"),
@@ -768,17 +785,47 @@ function migrateRecallBotRecord(rawRecord: LegacyRecallBotRecord): RecallBotReco
                 : null,
           }
         : null,
-    createRequestPayload:
-      rawRecord.createRequestPayload &&
-      typeof rawRecord.createRequestPayload === "object" &&
-      !Array.isArray(rawRecord.createRequestPayload)
-        ? (rawRecord.createRequestPayload as Record<string, unknown>)
-        : {},
-    rawRecallResponse:
-      rawRecord.rawRecallResponse && typeof rawRecord.rawRecallResponse === "object"
-        ? (rawRecord.rawRecallResponse as Record<string, unknown>)
-        : {},
+    createRequestPayload,
+    rawRecallResponse,
   };
+}
+
+function hasTranscriptConfig(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const recordingConfig = (value as Record<string, unknown>).recording_config;
+
+  if (!recordingConfig || typeof recordingConfig !== "object" || Array.isArray(recordingConfig)) {
+    return false;
+  }
+
+  const transcript = (recordingConfig as Record<string, unknown>).transcript;
+  const realtimeEndpoints = (recordingConfig as Record<string, unknown>).realtime_endpoints;
+
+  return Boolean(transcript) || (Array.isArray(realtimeEndpoints) && realtimeEndpoints.length > 0);
+}
+
+function normalizeRecallBotRole(
+  value: unknown,
+  input?: {
+    createRequestPayload?: Record<string, unknown>;
+    rawRecallResponse?: Record<string, unknown>;
+  },
+): RecallBotRole {
+  if (value === "listener" || value === "sender") {
+    return value;
+  }
+
+  if (
+    hasTranscriptConfig(input?.createRequestPayload) ||
+    hasTranscriptConfig(input?.rawRecallResponse)
+  ) {
+    return "listener";
+  }
+
+  return "sender";
 }
 
 function migrateTimerTrigger(rawTrigger: LegacyTimerTrigger): TimerTrigger {
@@ -1698,11 +1745,227 @@ export async function getLogs(sessionId?: string): Promise<{
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { data, error } = await client
+      .from("settings")
+      .select("storage_logging_mode")
+      .eq("id", "app_settings")
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return {
+      storageLoggingMode: normalizeStorageLoggingMode(data?.storage_logging_mode),
+    };
+  }
+
   const store = await readStore();
 
   return {
     storageLoggingMode: store.storageLoggingMode,
   };
+}
+
+export async function getRecallBotByRecallBotId(
+  recallBotId: string | null | undefined,
+): Promise<RecallBotRecord | null> {
+  const normalizedRecallBotId = recallBotId?.trim();
+
+  if (!normalizedRecallBotId) {
+    return null;
+  }
+
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { data, error } = await client
+      .from("recall_bots")
+      .select("*")
+      .eq("recall_bot_id", normalizedRecallBotId)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    return migrateRecallBotRecord({
+      id: String(data.id),
+      sessionId: String(data.session_id ?? ""),
+      recallBotId: String(data.recall_bot_id ?? ""),
+      meetingUrl: String(data.meeting_url ?? ""),
+      botName: String(data.bot_name ?? ""),
+      role: typeof data.role === "string" ? data.role : undefined,
+      transcriptLanguage: String(data.transcript_language ?? ""),
+      webhookUrl: String(data.webhook_url ?? ""),
+      status: String(data.status ?? "created"),
+      createdAt: String(data.created_at ?? new Date().toISOString()),
+      joinedAt: typeof data.joined_at === "string" ? data.joined_at : null,
+      lastStatusCheckedAt:
+        typeof data.last_status_checked_at === "string"
+          ? data.last_status_checked_at
+          : null,
+      lastErrorMessage:
+        typeof data.last_error_message === "string"
+          ? data.last_error_message
+          : null,
+      lastStopAttempt:
+        data.last_stop_attempt &&
+        typeof data.last_stop_attempt === "object" &&
+        !Array.isArray(data.last_stop_attempt)
+          ? (data.last_stop_attempt as RecallBotRecord["lastStopAttempt"])
+          : null,
+      createRequestPayload:
+        data.create_request_payload &&
+        typeof data.create_request_payload === "object" &&
+        !Array.isArray(data.create_request_payload)
+          ? (data.create_request_payload as Record<string, unknown>)
+          : {},
+      rawRecallResponse:
+        data.raw_recall_response &&
+        typeof data.raw_recall_response === "object" &&
+        !Array.isArray(data.raw_recall_response)
+          ? (data.raw_recall_response as Record<string, unknown>)
+          : {},
+    });
+  }
+
+  const store = await readStore();
+  return (
+    store.recallBots.find((bot) => bot.recallBotId === normalizedRecallBotId) ??
+    null
+  );
+}
+
+export async function listEnabledTriggerRulesBySession(
+  sessionId: string,
+): Promise<TriggerRule[]> {
+  const normalizedSessionId = normalizeSessionIdInput(sessionId);
+
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { data, error } = await client
+      .from("trigger_rules")
+      .select("*")
+      .eq("session_id", normalizedSessionId)
+      .eq("enabled", true)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return (data ?? []).map((rule) =>
+      migrateTriggerRule({
+        id: String(rule.id),
+        sessionId: String(rule.session_id ?? ""),
+        triggerPhrase: String(rule.trigger_phrase ?? ""),
+        normalizedTrigger: String(rule.normalized_trigger ?? ""),
+        replyMessage: String(rule.reply_message ?? ""),
+        cooldownSeconds: Number(rule.cooldown_seconds ?? 0),
+        responseDelaySeconds: Number(rule.response_delay_seconds ?? 0),
+        senderMode: normalizeSenderMode(String(rule.sender_mode ?? "round_robin_bots")),
+        senderBotIds: Array.isArray(rule.sender_bot_ids)
+          ? rule.sender_bot_ids.map((botId: unknown) => String(botId))
+          : [],
+        nextSenderIndex: Number(rule.next_sender_index ?? 0),
+        triggerCount: Number(rule.trigger_count ?? 0),
+        maxTriggerCount:
+          rule.max_trigger_count === null || rule.max_trigger_count === undefined
+            ? null
+            : Number(rule.max_trigger_count),
+        enabled: Boolean(rule.enabled),
+        lastMatchedAt:
+          typeof rule.last_matched_at === "string"
+            ? rule.last_matched_at
+            : null,
+        lastTriggeredAt:
+          typeof rule.last_triggered_at === "string"
+            ? rule.last_triggered_at
+            : null,
+        createdAt: String(rule.created_at ?? new Date().toISOString()),
+      }),
+    );
+  }
+
+  const store = await readStore();
+  return sortTriggerRules(store.triggerRules).filter(
+    (rule) => rule.sessionId === normalizedSessionId && rule.enabled,
+  );
+}
+
+export async function listActiveBotsBySession(
+  sessionId: string,
+): Promise<RecallBotRecord[]> {
+  const normalizedSessionId = normalizeSessionIdInput(sessionId);
+
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { data, error } = await client
+      .from("recall_bots")
+      .select("*")
+      .eq("session_id", normalizedSessionId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return (data ?? [])
+      .map((bot) =>
+        migrateRecallBotRecord({
+          id: String(bot.id),
+          sessionId: String(bot.session_id ?? ""),
+          recallBotId: String(bot.recall_bot_id ?? ""),
+          meetingUrl: String(bot.meeting_url ?? ""),
+          botName: String(bot.bot_name ?? ""),
+          role: typeof bot.role === "string" ? bot.role : undefined,
+          transcriptLanguage: String(bot.transcript_language ?? ""),
+          webhookUrl: String(bot.webhook_url ?? ""),
+          status: String(bot.status ?? "created"),
+          createdAt: String(bot.created_at ?? new Date().toISOString()),
+          joinedAt: typeof bot.joined_at === "string" ? bot.joined_at : null,
+          lastStatusCheckedAt:
+            typeof bot.last_status_checked_at === "string"
+              ? bot.last_status_checked_at
+              : null,
+          lastErrorMessage:
+            typeof bot.last_error_message === "string"
+              ? bot.last_error_message
+              : null,
+          lastStopAttempt:
+            bot.last_stop_attempt &&
+            typeof bot.last_stop_attempt === "object" &&
+            !Array.isArray(bot.last_stop_attempt)
+              ? (bot.last_stop_attempt as RecallBotRecord["lastStopAttempt"])
+              : null,
+          createRequestPayload:
+            bot.create_request_payload &&
+            typeof bot.create_request_payload === "object" &&
+            !Array.isArray(bot.create_request_payload)
+              ? (bot.create_request_payload as Record<string, unknown>)
+              : {},
+          rawRecallResponse:
+            bot.raw_recall_response &&
+            typeof bot.raw_recall_response === "object" &&
+            !Array.isArray(bot.raw_recall_response)
+              ? (bot.raw_recall_response as Record<string, unknown>)
+              : {},
+        }),
+      )
+      .filter((bot) => isBotActiveStatus(bot.status));
+  }
+
+  const store = await readStore();
+  return sortRecallBots(store.recallBots).filter(
+    (bot) => bot.sessionId === normalizedSessionId && isBotActiveStatus(bot.status),
+  );
 }
 
 export async function listMeetingSessions(): Promise<MeetingSession[]> {
@@ -2159,6 +2422,7 @@ function appendRecallBotRecordToStore(
     sessionId: string;
     meetingUrl: string;
     botName: string;
+    role: RecallBotRole;
     transcriptLanguage: string;
     createRequestPayload: Record<string, unknown>;
     rawRecallResponse: Record<string, unknown>;
@@ -2181,6 +2445,7 @@ function appendRecallBotRecordToStore(
     recallBotId,
     meetingUrl: input.meetingUrl,
     botName: input.botName,
+    role: input.role,
     transcriptLanguage: input.transcriptLanguage,
     webhookUrl,
     status: deriveRecallBotStatus(input.rawRecallResponse),
@@ -2242,6 +2507,10 @@ function applyRecallBotRecordError(
   }
 
   return record;
+}
+
+function getBotRoleForCreationIndex(index: number): RecallBotRole {
+  return index === 0 ? "listener" : "sender";
 }
 
 function setRecallBotJoinedAtIfNeeded(
@@ -2689,6 +2958,7 @@ export async function saveRecallBotRecord(input: {
   sessionId: string;
   meetingUrl: string;
   botName: string;
+  role: RecallBotRole;
   transcriptLanguage: string;
   createRequestPayload: Record<string, unknown>;
   rawRecallResponse: Record<string, unknown>;
@@ -3176,18 +3446,20 @@ async function executeSenderTargets(input: {
   sendAttemptCount: number;
   actualSendCount: number;
 }> {
-  const senderResults: MatchSenderResult[] = [];
   const sentExecutionKeys = new Set<string>();
+  const senderResultsByIndex = new Map<number, MatchSenderResult>();
   let sendAttemptCount = 0;
   let actualSendCount = 0;
+  const sendTasks: Array<() => Promise<void>> = [];
+  const maxConcurrentSends = 3;
 
-  for (const senderTarget of input.senderTargets) {
+  for (const [index, senderTarget] of input.senderTargets.entries()) {
     if (!senderTarget.isAvailable) {
       const unavailableStatus =
         senderTarget.errorMessage === "no_active_sender_bot"
           ? "no_active_sender_bot"
           : "failed";
-      senderResults.push({
+      senderResultsByIndex.set(index, {
         senderBotId: senderTarget.senderBotId,
         senderBotName: senderTarget.senderBotName,
         status: unavailableStatus,
@@ -3202,7 +3474,7 @@ async function executeSenderTargets(input: {
     const executionSenderKey = `${input.triggerExecutionId}:${senderTarget.senderBotId}`;
 
     if (sentExecutionKeys.has(executionSenderKey)) {
-      senderResults.push({
+      senderResultsByIndex.set(index, {
         senderBotId: senderTarget.senderBotId,
         senderBotName: senderTarget.senderBotName,
         status: "skipped_duplicate_sender_execution",
@@ -3214,48 +3486,407 @@ async function executeSenderTargets(input: {
 
     sentExecutionKeys.add(executionSenderKey);
     sendAttemptCount += 1;
+    sendTasks.push(async () => {
+      if (!input.sendChatEnabled) {
+        senderResultsByIndex.set(index, {
+          senderBotId: senderTarget.senderBotId,
+          senderBotName: senderTarget.senderBotName,
+          status: "dry_run",
+          errorMessage: null,
+          action: `Would send Zoom chat from ${senderTarget.senderBotName ?? senderTarget.senderBotId}: ${input.replyMessage}`,
+        });
+        return;
+      }
 
-    if (!input.sendChatEnabled) {
-      senderResults.push({
-        senderBotId: senderTarget.senderBotId,
-        senderBotName: senderTarget.senderBotName,
-        status: "dry_run",
-        errorMessage: null,
-        action: `Would send Zoom chat from ${senderTarget.senderBotName ?? senderTarget.senderBotId}: ${input.replyMessage}`,
-      });
-      continue;
-    }
+      try {
+        await sendRecallChatMessage(
+          senderTarget.senderBotId as string,
+          input.replyMessage,
+        );
+        senderResultsByIndex.set(index, {
+          senderBotId: senderTarget.senderBotId,
+          senderBotName: senderTarget.senderBotName,
+          status: "sent",
+          errorMessage: null,
+          action: `Sent Zoom chat from ${senderTarget.senderBotName ?? senderTarget.senderBotId}: ${input.replyMessage}`,
+        });
+        actualSendCount += 1;
+      } catch (error) {
+        senderResultsByIndex.set(index, {
+          senderBotId: senderTarget.senderBotId,
+          senderBotName: senderTarget.senderBotName,
+          status: "failed",
+          errorMessage:
+            error instanceof Error ? error.message : "Unknown Recall API error.",
+          action: `Failed to send Zoom chat from ${senderTarget.senderBotName ?? senderTarget.senderBotId}: ${input.replyMessage}`,
+        });
+      }
+    });
+  }
 
-    try {
-      await sendRecallChatMessage(
-        senderTarget.senderBotId as string,
-        input.replyMessage,
-      );
-      senderResults.push({
-        senderBotId: senderTarget.senderBotId,
-        senderBotName: senderTarget.senderBotName,
-        status: "sent",
-        errorMessage: null,
-        action: `Sent Zoom chat from ${senderTarget.senderBotName ?? senderTarget.senderBotId}: ${input.replyMessage}`,
-      });
-      actualSendCount += 1;
-    } catch (error) {
-      senderResults.push({
-        senderBotId: senderTarget.senderBotId,
-        senderBotName: senderTarget.senderBotName,
-        status: "failed",
-        errorMessage:
-          error instanceof Error ? error.message : "Unknown Recall API error.",
-        action: `Failed to send Zoom chat from ${senderTarget.senderBotName ?? senderTarget.senderBotId}: ${input.replyMessage}`,
-      });
-    }
+  for (let taskIndex = 0; taskIndex < sendTasks.length; taskIndex += maxConcurrentSends) {
+    await Promise.all(
+      sendTasks
+        .slice(taskIndex, taskIndex + maxConcurrentSends)
+        .map((task) => task()),
+    );
   }
 
   return {
-    senderResults,
+    senderResults: input.senderTargets.map(
+      (_, index) =>
+        senderResultsByIndex.get(index) ?? {
+          senderBotId: input.senderTargets[index]?.senderBotId ?? null,
+          senderBotName: input.senderTargets[index]?.senderBotName ?? null,
+          status: "failed",
+          errorMessage: "Sender execution did not complete.",
+          action: `Failed to send Zoom chat: ${input.replyMessage}`,
+        },
+    ),
     sendAttemptCount,
     actualSendCount,
   };
+}
+
+function isListenerRecallBot(record: RecallBotRecord | null | undefined): boolean {
+  return normalizeRecallBotRole(record?.role, {
+    createRequestPayload: record?.createRequestPayload,
+    rawRecallResponse: record?.rawRecallResponse,
+  }) === "listener";
+}
+
+function buildTranscriptLog(input: {
+  sessionId: string;
+  botId: string | null;
+  transcriptText: string;
+  normalizedTranscriptText: string;
+  matchedRuleIds: string[];
+  sourceEvent: TranscriptLog["sourceEvent"];
+  createdAt: string;
+}): TranscriptLog {
+  return {
+    id: randomUUID(),
+    sessionId: input.sessionId,
+    botId: input.botId,
+    transcriptText: input.transcriptText,
+    normalizedTranscriptText: input.normalizedTranscriptText,
+    matchedRuleIds: input.matchedRuleIds,
+    sourceEvent: input.sourceEvent,
+    createdAt: input.createdAt,
+  };
+}
+
+function mapMatchLogToSupabaseRow(log: MatchLog) {
+  return {
+    id: log.id,
+    session_id: log.sessionId,
+    bot_id: log.botId,
+    trigger_execution_id: log.triggerExecutionId,
+    source_event: log.sourceEvent,
+    source_webhook_bot_id: log.sourceWebhookBotId,
+    rule_id: log.ruleId,
+    trigger_phrase: log.triggerPhrase,
+    reply_message: log.replyMessage,
+    transcript_text: log.transcriptText,
+    normalized_transcript_text: log.normalizedTranscriptText,
+    created_at: log.createdAt,
+    status: log.status,
+    sender_mode: log.senderMode,
+    sender_bot_ids_used: log.senderBotIdsUsed,
+    original_sender_bot_ids: log.originalSenderBotIds,
+    deduped_sender_bot_ids: log.dedupedSenderBotIds,
+    chosen_round_robin_bot_id: log.chosenRoundRobinBotId,
+    chosen_round_robin_bot_name: log.chosenRoundRobinBotName,
+    previous_round_robin_index: log.previousRoundRobinIndex,
+    next_round_robin_index: log.nextRoundRobinIndex,
+    response_delay_seconds: log.responseDelaySeconds,
+    trigger_count_after: log.triggerCountAfter,
+    max_trigger_count: log.maxTriggerCount,
+    auto_disabled_after_trigger: log.autoDisabledAfterTrigger,
+    send_attempt_count: log.sendAttemptCount,
+    actual_send_count: log.actualSendCount,
+    warning_messages: log.warningMessages,
+    sender_results: log.senderResults,
+    error_message: log.errorMessage,
+    action: log.action,
+  };
+}
+
+async function appendMatchedTriggerLog(log: MatchLog): Promise<void> {
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { error } = await client
+      .from("matched_trigger_logs")
+      .insert(mapMatchLogToSupabaseRow(log));
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return;
+  }
+
+  await mutateStore(async (store) => {
+    store.matchLogs.unshift(log);
+    if (store.matchLogs.length > 100) {
+      store.matchLogs = store.matchLogs.slice(0, 100);
+    }
+  });
+}
+
+async function appendTranscriptLog(log: TranscriptLog): Promise<void> {
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { error } = await client.from("transcript_logs").insert({
+      id: log.id,
+      session_id: log.sessionId,
+      bot_id: log.botId,
+      transcript_text: log.transcriptText,
+      normalized_transcript_text: log.normalizedTranscriptText,
+      matched_rule_ids: log.matchedRuleIds,
+      source_event: log.sourceEvent,
+      created_at: log.createdAt,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return;
+  }
+
+  await mutateStore(async (store) => {
+    store.transcriptLogs.unshift(log);
+    if (store.transcriptLogs.length > 100) {
+      store.transcriptLogs = store.transcriptLogs.slice(0, 100);
+    }
+  });
+}
+
+async function updateTriggerRuleStats(rule: TriggerRule): Promise<void> {
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { error } = await client
+      .from("trigger_rules")
+      .update({
+        enabled: rule.enabled,
+        last_matched_at: rule.lastMatchedAt,
+        last_triggered_at: rule.lastTriggeredAt,
+        next_sender_index: rule.nextSenderIndex,
+        trigger_count: rule.triggerCount,
+        max_trigger_count: rule.maxTriggerCount,
+      })
+      .eq("id", rule.id);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return;
+  }
+}
+
+async function listRecallBotsBySession(sessionId: string): Promise<RecallBotRecord[]> {
+  const normalizedSessionId = normalizeSessionIdInput(sessionId);
+
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { data, error } = await client
+      .from("recall_bots")
+      .select("*")
+      .eq("session_id", normalizedSessionId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return (data ?? []).map((bot) =>
+      migrateRecallBotRecord({
+        id: String(bot.id),
+        sessionId: String(bot.session_id ?? ""),
+        recallBotId: String(bot.recall_bot_id ?? ""),
+        meetingUrl: String(bot.meeting_url ?? ""),
+        botName: String(bot.bot_name ?? ""),
+        role: typeof bot.role === "string" ? bot.role : undefined,
+        transcriptLanguage: String(bot.transcript_language ?? ""),
+        webhookUrl: String(bot.webhook_url ?? ""),
+        status: String(bot.status ?? "created"),
+        createdAt: String(bot.created_at ?? new Date().toISOString()),
+        joinedAt: typeof bot.joined_at === "string" ? bot.joined_at : null,
+        lastStatusCheckedAt:
+          typeof bot.last_status_checked_at === "string"
+            ? bot.last_status_checked_at
+            : null,
+        lastErrorMessage:
+          typeof bot.last_error_message === "string"
+            ? bot.last_error_message
+            : null,
+        lastStopAttempt:
+          bot.last_stop_attempt &&
+          typeof bot.last_stop_attempt === "object" &&
+          !Array.isArray(bot.last_stop_attempt)
+            ? (bot.last_stop_attempt as RecallBotRecord["lastStopAttempt"])
+            : null,
+        createRequestPayload:
+          bot.create_request_payload &&
+          typeof bot.create_request_payload === "object" &&
+          !Array.isArray(bot.create_request_payload)
+            ? (bot.create_request_payload as Record<string, unknown>)
+            : {},
+        rawRecallResponse:
+          bot.raw_recall_response &&
+          typeof bot.raw_recall_response === "object" &&
+          !Array.isArray(bot.raw_recall_response)
+            ? (bot.raw_recall_response as Record<string, unknown>)
+            : {},
+      }),
+    );
+  }
+
+  const store = await readStore();
+  return sortRecallBots(store.recallBots).filter(
+    (bot) => bot.sessionId === normalizedSessionId,
+  );
+}
+
+async function listRecentMatchLogsForTranscript(input: {
+  sessionId: string;
+  ruleId: string;
+  normalizedTranscriptText: string;
+  sinceIso: string;
+}): Promise<MatchLog[]> {
+  if (getStorageDriver() === "supabase") {
+    const client = createSupabaseServiceRoleClient();
+    const { data, error } = await client
+      .from("matched_trigger_logs")
+      .select("*")
+      .eq("session_id", input.sessionId)
+      .eq("rule_id", input.ruleId)
+      .eq("normalized_transcript_text", input.normalizedTranscriptText)
+      .gte("created_at", input.sinceIso)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return (data ?? []).map((log) =>
+      migrateMatchLog({
+        id: String(log.id),
+        sessionId: String(log.session_id ?? ""),
+        botId: typeof log.bot_id === "string" ? log.bot_id : null,
+        triggerExecutionId:
+          typeof log.trigger_execution_id === "string"
+            ? log.trigger_execution_id
+            : null,
+        sourceEvent:
+          log.source_event === "transcript.partial_data"
+            ? "transcript.partial_data"
+            : "transcript.data",
+        sourceWebhookBotId:
+          typeof log.source_webhook_bot_id === "string"
+            ? log.source_webhook_bot_id
+            : null,
+        ruleId: String(log.rule_id ?? ""),
+        triggerPhrase: String(log.trigger_phrase ?? ""),
+        replyMessage: String(log.reply_message ?? ""),
+        transcriptText: String(log.transcript_text ?? ""),
+        normalizedTranscriptText: String(log.normalized_transcript_text ?? ""),
+        createdAt: String(log.created_at ?? new Date().toISOString()),
+        status:
+          String(log.status ?? "dry_run") as MatchLog["status"],
+        senderMode: normalizeSenderMode(String(log.sender_mode ?? "round_robin_bots")),
+        senderBotIdsUsed: Array.isArray(log.sender_bot_ids_used)
+          ? log.sender_bot_ids_used.map((botId: unknown) => String(botId))
+          : [],
+        originalSenderBotIds: Array.isArray(log.original_sender_bot_ids)
+          ? log.original_sender_bot_ids.map((botId: unknown) => String(botId))
+          : [],
+        dedupedSenderBotIds: Array.isArray(log.deduped_sender_bot_ids)
+          ? log.deduped_sender_bot_ids.map((botId: unknown) => String(botId))
+          : [],
+        chosenRoundRobinBotId:
+          typeof log.chosen_round_robin_bot_id === "string"
+            ? log.chosen_round_robin_bot_id
+            : null,
+        chosenRoundRobinBotName:
+          typeof log.chosen_round_robin_bot_name === "string"
+            ? log.chosen_round_robin_bot_name
+            : null,
+        previousRoundRobinIndex:
+          log.previous_round_robin_index === null ||
+          log.previous_round_robin_index === undefined
+            ? null
+            : Number(log.previous_round_robin_index),
+        nextRoundRobinIndex:
+          log.next_round_robin_index === null ||
+          log.next_round_robin_index === undefined
+            ? null
+            : Number(log.next_round_robin_index),
+        responseDelaySeconds: Number(log.response_delay_seconds ?? 0),
+        triggerCountAfter:
+          log.trigger_count_after === null || log.trigger_count_after === undefined
+            ? null
+            : Number(log.trigger_count_after),
+        maxTriggerCount:
+          log.max_trigger_count === null || log.max_trigger_count === undefined
+            ? null
+            : Number(log.max_trigger_count),
+        autoDisabledAfterTrigger: Boolean(log.auto_disabled_after_trigger),
+        sendAttemptCount: Number(log.send_attempt_count ?? 0),
+        actualSendCount: Number(log.actual_send_count ?? 0),
+        warningMessages: Array.isArray(log.warning_messages)
+          ? log.warning_messages.map((message: unknown) => String(message))
+          : [],
+        senderResults: Array.isArray(log.sender_results)
+          ? log.sender_results.map((result: unknown) => {
+              const senderResult =
+                result && typeof result === "object"
+                  ? (result as Record<string, unknown>)
+                  : {};
+
+              return {
+                senderBotId:
+                  typeof senderResult.senderBotId === "string"
+                    ? senderResult.senderBotId
+                    : null,
+                senderBotName:
+                  typeof senderResult.senderBotName === "string"
+                    ? senderResult.senderBotName
+                    : null,
+                status:
+                  senderResult.status === "sent" ||
+                  senderResult.status === "failed" ||
+                  senderResult.status === "no_active_sender_bot" ||
+                  senderResult.status === "skipped_dedupe" ||
+                  senderResult.status === "skipped_duplicate_sender_execution"
+                    ? senderResult.status
+                    : "dry_run",
+                errorMessage:
+                  typeof senderResult.errorMessage === "string"
+                    ? senderResult.errorMessage
+                    : null,
+                action: String(senderResult.action ?? ""),
+              };
+            })
+          : [],
+        errorMessage:
+          typeof log.error_message === "string" ? log.error_message : null,
+        action: String(log.action ?? ""),
+      }),
+    );
+  }
+
+  const store = await readStore();
+  return store.matchLogs.filter(
+    (log) =>
+      log.sessionId === input.sessionId &&
+      log.ruleId === input.ruleId &&
+      log.normalizedTranscriptText === input.normalizedTranscriptText &&
+      log.createdAt >= input.sinceIso,
+  );
 }
 
 function deriveMatchStatus(senderResults: MatchSenderResult[]): MatchLog["status"] {
@@ -3332,6 +3963,12 @@ function getEarliestActiveJoinedAt(recallBots: RecallBotRecord[]): string | null
 export async function findSessionIdForRecallBotId(
   recallBotId: string | null | undefined,
 ): Promise<string> {
+  const recallBot = await getRecallBotByRecallBotId(recallBotId);
+
+  if (recallBot) {
+    return recallBot.sessionId;
+  }
+
   const store = await readStore();
   const defaultSession = ensureDefaultSessionExists(store);
 
@@ -3339,10 +3976,7 @@ export async function findSessionIdForRecallBotId(
     return defaultSession.id;
   }
 
-  return (
-    store.recallBots.find((bot) => bot.recallBotId === recallBotId)?.sessionId ??
-    defaultSession.id
-  );
+  return defaultSession.id;
 }
 
 export async function processTranscriptWebhook(input: {
@@ -3354,10 +3988,283 @@ export async function processTranscriptWebhook(input: {
   transcriptLog: TranscriptLog;
   matchedLogs: MatchLog[];
 }> {
+  if (getStorageDriver() === "supabase") {
+    return queueStoreMutation(async () => {
+      const sourceBotRecord = await getRecallBotByRecallBotId(input.botId);
+      const sessionId =
+        sourceBotRecord?.sessionId ??
+        normalizeSessionIdInput(input.sessionId ?? DEFAULT_SESSION_ID);
+      const transcriptText = input.transcriptText.trim();
+      const normalizedTranscriptText = normalizeTranscript(transcriptText);
+      const receivedAt = new Date();
+      const transcriptLog = buildTranscriptLog({
+        sessionId,
+        botId: input.botId,
+        transcriptText,
+        normalizedTranscriptText,
+        matchedRuleIds: [],
+        sourceEvent: input.sourceEvent,
+        createdAt: receivedAt.toISOString(),
+      });
+
+      if (sourceBotRecord && !isListenerRecallBot(sourceBotRecord)) {
+        if ((await getAppSettings()).storageLoggingMode === "debug") {
+          await appendTranscriptLog(transcriptLog);
+        }
+
+        return {
+          transcriptLog,
+          matchedLogs: [],
+        };
+      }
+
+      const matchedLogs: MatchLog[] = [];
+      const sendChatEnabled = isRecallSendChatEnabled();
+      const dedupeWindowMs = 5000;
+      const sessionRules = await listEnabledTriggerRulesBySession(sessionId);
+      const sessionBots = await listRecallBotsBySession(sessionId);
+
+      for (const rule of sessionRules) {
+        if (rule.enabled && hasReachedMaxTriggerCount(rule)) {
+          rule.enabled = false;
+          await updateTriggerRuleStats(rule);
+        }
+      }
+
+      const matchedRule = sessionRules.find(
+        (rule) =>
+          rule.enabled &&
+          !hasReachedMaxTriggerCount(rule) &&
+          normalizedTranscriptText.includes(rule.normalizedTrigger),
+      );
+
+      if (matchedRule) {
+        const senderTargetBuildResult = buildSenderTargets({
+          matchedRule,
+          webhookBotId: input.botId,
+          recallBots: sessionBots,
+        });
+        const senderBotIdsUsed = senderTargetBuildResult.senderTargets
+          .map((senderTarget) => senderTarget.senderBotId)
+          .filter((senderBotId): senderBotId is string => Boolean(senderBotId));
+        const acceptedExecutionLockKey = `${matchedRule.id}:${normalizedTranscriptText}`;
+        const recentDuplicate = (
+          await listRecentMatchLogsForTranscript({
+            sessionId,
+            ruleId: matchedRule.id,
+            normalizedTranscriptText,
+            sinceIso: new Date(receivedAt.getTime() - dedupeWindowMs).toISOString(),
+          })
+        ).find((log) => {
+          if (log.ruleId !== matchedRule.id) {
+            return false;
+          }
+
+          if (log.normalizedTranscriptText !== normalizedTranscriptText) {
+            return false;
+          }
+
+          return (
+            receivedAt.getTime() - new Date(log.createdAt).getTime() < dedupeWindowMs
+          );
+        });
+        const activeExecutionLock = activeTriggerExecutionLocks.get(
+          acceptedExecutionLockKey,
+        );
+
+        if (recentDuplicate || activeExecutionLock) {
+          const senderResults: MatchSenderResult[] =
+            senderTargetBuildResult.senderTargets.map((senderTarget) => ({
+              senderBotId: senderTarget.senderBotId,
+              senderBotName: senderTarget.senderBotName,
+              status: "skipped_dedupe",
+              errorMessage: null,
+              action: senderTarget.senderBotId
+                ? activeExecutionLock
+                  ? `Skipped duplicate send for ${senderTarget.senderBotName ?? senderTarget.senderBotId} because another accepted execution is already in progress.`
+                  : `Skipped duplicate send for ${senderTarget.senderBotName ?? senderTarget.senderBotId}`
+                : activeExecutionLock
+                  ? "Skipped duplicate send because another accepted execution is already in progress for this rule and transcript."
+                  : "Skipped duplicate send because the same rule and transcript already fired recently.",
+            }));
+          const createdAt = new Date().toISOString();
+          const warningMessages = [...senderTargetBuildResult.warningMessages];
+
+          if (activeExecutionLock) {
+            warningMessages.push(
+              `Active accepted execution lock prevented a duplicate send for ${acceptedExecutionLockKey}.`,
+            );
+          }
+
+          const matchedLog: MatchLog = {
+            id: randomUUID(),
+            sessionId,
+            botId: input.botId,
+            triggerExecutionId: activeExecutionLock?.executionId ?? null,
+            sourceEvent: input.sourceEvent,
+            sourceWebhookBotId: input.botId,
+            ruleId: matchedRule.id,
+            triggerPhrase: matchedRule.triggerPhrase,
+            replyMessage: matchedRule.replyMessage,
+            transcriptText,
+            normalizedTranscriptText,
+            createdAt,
+            status: "skipped_dedupe",
+            senderMode: matchedRule.senderMode,
+            senderBotIdsUsed,
+            originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
+            dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
+            chosenRoundRobinBotId: senderTargetBuildResult.chosenRoundRobinBotId,
+            chosenRoundRobinBotName: senderTargetBuildResult.chosenRoundRobinBotName,
+            previousRoundRobinIndex:
+              senderTargetBuildResult.previousRoundRobinIndex,
+            nextRoundRobinIndex: senderTargetBuildResult.nextRoundRobinIndex,
+            responseDelaySeconds: matchedRule.responseDelaySeconds,
+            triggerCountAfter: matchedRule.triggerCount,
+            maxTriggerCount: matchedRule.maxTriggerCount,
+            autoDisabledAfterTrigger: false,
+            sendAttemptCount: 0,
+            actualSendCount: 0,
+            warningMessages,
+            senderResults,
+            errorMessage: null,
+            action: activeExecutionLock
+              ? `Skipped duplicate send for rule "${matchedRule.triggerPhrase}" because an accepted execution is already in progress.`
+              : `Skipped duplicate send for rule "${matchedRule.triggerPhrase}".`,
+          };
+
+          matchedLogs.push(matchedLog);
+          await appendMatchedTriggerLog(matchedLog);
+        } else {
+          const previousMatchTime = matchedRule.lastMatchedAt
+            ? new Date(matchedRule.lastMatchedAt).getTime()
+            : null;
+          const cooldownMs = matchedRule.cooldownSeconds * 1000;
+          const cooldownReady =
+            previousMatchTime === null ||
+            cooldownMs === 0 ||
+            receivedAt.getTime() - previousMatchTime >= cooldownMs;
+
+          if (cooldownReady) {
+            const triggerExecutionId = randomUUID();
+            const acceptedAtIso = receivedAt.toISOString();
+            activeTriggerExecutionLocks.set(acceptedExecutionLockKey, {
+              executionId: triggerExecutionId,
+              acceptedAt: receivedAt.getTime(),
+            });
+            matchedRule.lastMatchedAt = acceptedAtIso;
+            await updateTriggerRuleStats(matchedRule);
+
+            try {
+              // Local MVP waits inline before sending and logging. In production,
+              // delayed sends should move to a background job or queue.
+              await delay(matchedRule.responseDelaySeconds * 1000);
+
+              const createdAt = new Date().toISOString();
+              matchedRule.lastTriggeredAt = createdAt;
+              matchedRule.triggerCount += 1;
+
+              const executionResult = await executeSenderTargets({
+                triggerExecutionId,
+                senderTargets: senderTargetBuildResult.senderTargets,
+                replyMessage: matchedRule.replyMessage,
+                sendChatEnabled,
+              });
+              const firstFailure = executionResult.senderResults.find(
+                (senderResult) => senderResult.status === "failed",
+              );
+              const status = deriveMatchStatus(executionResult.senderResults);
+              const autoDisabledAfterTrigger =
+                hasReachedMaxTriggerCount(matchedRule) && matchedRule.enabled;
+
+              if (autoDisabledAfterTrigger) {
+                matchedRule.enabled = false;
+              }
+
+              if (
+                matchedRule.senderMode === "round_robin_bots" &&
+                senderTargetBuildResult.chosenRoundRobinBotId
+              ) {
+                matchedRule.nextSenderIndex =
+                  senderTargetBuildResult.nextRoundRobinIndex ??
+                  matchedRule.nextSenderIndex;
+              }
+
+              await updateTriggerRuleStats(matchedRule);
+
+              const matchedLog: MatchLog = {
+                id: randomUUID(),
+                sessionId,
+                botId: input.botId,
+                triggerExecutionId,
+                sourceEvent: input.sourceEvent,
+                sourceWebhookBotId: input.botId,
+                ruleId: matchedRule.id,
+                triggerPhrase: matchedRule.triggerPhrase,
+                replyMessage: matchedRule.replyMessage,
+                transcriptText,
+                normalizedTranscriptText,
+                createdAt,
+                status,
+                senderMode: matchedRule.senderMode,
+                senderBotIdsUsed,
+                originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
+                dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
+                chosenRoundRobinBotId:
+                  senderTargetBuildResult.chosenRoundRobinBotId,
+                chosenRoundRobinBotName:
+                  senderTargetBuildResult.chosenRoundRobinBotName,
+                previousRoundRobinIndex:
+                  senderTargetBuildResult.previousRoundRobinIndex,
+                nextRoundRobinIndex:
+                  matchedRule.senderMode === "round_robin_bots"
+                    ? matchedRule.nextSenderIndex
+                    : senderTargetBuildResult.nextRoundRobinIndex,
+                responseDelaySeconds: matchedRule.responseDelaySeconds,
+                triggerCountAfter: matchedRule.triggerCount,
+                maxTriggerCount: matchedRule.maxTriggerCount,
+                autoDisabledAfterTrigger,
+                sendAttemptCount: executionResult.sendAttemptCount,
+                actualSendCount: executionResult.actualSendCount,
+                warningMessages: senderTargetBuildResult.warningMessages,
+                senderResults: executionResult.senderResults,
+                errorMessage: firstFailure?.errorMessage ?? null,
+                action: executionResult.senderResults
+                  .map((senderResult) => senderResult.action)
+                  .join(" | "),
+              };
+
+              matchedLogs.push(matchedLog);
+              await appendMatchedTriggerLog(matchedLog);
+            } finally {
+              activeTriggerExecutionLocks.delete(acceptedExecutionLockKey);
+            }
+          }
+        }
+      }
+
+      const finalTranscriptLog = {
+        ...transcriptLog,
+        matchedRuleIds: matchedLogs.map((log) => log.ruleId),
+      };
+
+      if ((await getAppSettings()).storageLoggingMode === "debug") {
+        await appendTranscriptLog(finalTranscriptLog);
+      }
+
+      return {
+        transcriptLog: finalTranscriptLog,
+        matchedLogs,
+      };
+    });
+  }
+
   return mutateStore(async (store) => {
+    const sourceBotRecord =
+      store.recallBots.find((bot) => bot.recallBotId === input.botId) ?? null;
     const sessionId =
       findMeetingSessionById(store, input.sessionId ?? null)?.id ??
-      store.recallBots.find((bot) => bot.recallBotId === input.botId)?.sessionId ??
+      sourceBotRecord?.sessionId ??
       ensureDefaultSessionExists(store).id;
     const transcriptText = input.transcriptText.trim();
     const normalizedTranscriptText = normalizeTranscript(transcriptText);
@@ -3369,209 +4276,210 @@ export async function processTranscriptWebhook(input: {
     const sessionBots = store.recallBots.filter((bot) => bot.sessionId === sessionId);
     const sessionMatchLogs = store.matchLogs.filter((log) => log.sessionId === sessionId);
 
-    for (const rule of sessionRules) {
-      if (rule.enabled && hasReachedMaxTriggerCount(rule)) {
-        rule.enabled = false;
+    if (!sourceBotRecord || isListenerRecallBot(sourceBotRecord)) {
+      for (const rule of sessionRules) {
+        if (rule.enabled && hasReachedMaxTriggerCount(rule)) {
+          rule.enabled = false;
+        }
       }
-    }
-    // Only the first enabled matching rule is allowed to fire so one
-    // transcript event cannot generate duplicate Zoom chat messages.
-    const matchedRule = sessionRules.find(
-      (rule) =>
-        rule.enabled &&
-        !hasReachedMaxTriggerCount(rule) &&
-        normalizedTranscriptText.includes(rule.normalizedTrigger),
-    );
-
-    if (matchedRule) {
-      const senderTargetBuildResult = buildSenderTargets({
-        matchedRule,
-        webhookBotId: input.botId,
-        recallBots: sessionBots,
-      });
-      const senderBotIdsUsed = senderTargetBuildResult.senderTargets
-        .map((senderTarget) => senderTarget.senderBotId)
-        .filter((senderBotId): senderBotId is string => Boolean(senderBotId));
-      const acceptedExecutionLockKey = `${matchedRule.id}:${normalizedTranscriptText}`;
-      const recentDuplicate = sessionMatchLogs.find((log) => {
-        if (log.ruleId !== matchedRule.id) {
-          return false;
-        }
-
-        if (log.normalizedTranscriptText !== normalizedTranscriptText) {
-          return false;
-        }
-
-        return (
-          receivedAt.getTime() - new Date(log.createdAt).getTime() < dedupeWindowMs
-        );
-      });
-      const activeExecutionLock = activeTriggerExecutionLocks.get(
-        acceptedExecutionLockKey,
+      // Only the first enabled matching rule is allowed to fire so one
+      // transcript event cannot generate duplicate Zoom chat messages.
+      const matchedRule = sessionRules.find(
+        (rule) =>
+          rule.enabled &&
+          !hasReachedMaxTriggerCount(rule) &&
+          normalizedTranscriptText.includes(rule.normalizedTrigger),
       );
 
-      if (recentDuplicate || activeExecutionLock) {
-        const senderResults: MatchSenderResult[] =
-          senderTargetBuildResult.senderTargets.map((senderTarget) => ({
-            senderBotId: senderTarget.senderBotId,
-            senderBotName: senderTarget.senderBotName,
-            status: "skipped_dedupe",
-            errorMessage: null,
-            action: senderTarget.senderBotId
-              ? activeExecutionLock
-                ? `Skipped duplicate send for ${senderTarget.senderBotName ?? senderTarget.senderBotId} because another accepted execution is already in progress.`
-                : `Skipped duplicate send for ${senderTarget.senderBotName ?? senderTarget.senderBotId}`
-              : activeExecutionLock
-                ? "Skipped duplicate send because another accepted execution is already in progress for this rule and transcript."
-                : "Skipped duplicate send because the same rule and transcript already fired recently.",
-          }));
-        const createdAt = new Date().toISOString();
-        const warningMessages = [...senderTargetBuildResult.warningMessages];
-
-        if (activeExecutionLock) {
-          warningMessages.push(
-            `Active accepted execution lock prevented a duplicate send for ${acceptedExecutionLockKey}.`,
-          );
-        }
-
-        matchedLogs.push({
-          id: randomUUID(),
-          sessionId,
-          botId: input.botId,
-          triggerExecutionId: activeExecutionLock?.executionId ?? null,
-          sourceEvent: input.sourceEvent,
-          sourceWebhookBotId: input.botId,
-          ruleId: matchedRule.id,
-          triggerPhrase: matchedRule.triggerPhrase,
-          replyMessage: matchedRule.replyMessage,
-          transcriptText,
-          normalizedTranscriptText,
-          createdAt,
-          status: "skipped_dedupe",
-          senderMode: matchedRule.senderMode,
-          senderBotIdsUsed,
-          originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
-          dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
-          chosenRoundRobinBotId: senderTargetBuildResult.chosenRoundRobinBotId,
-          chosenRoundRobinBotName: senderTargetBuildResult.chosenRoundRobinBotName,
-          previousRoundRobinIndex: senderTargetBuildResult.previousRoundRobinIndex,
-          nextRoundRobinIndex: senderTargetBuildResult.nextRoundRobinIndex,
-          responseDelaySeconds: matchedRule.responseDelaySeconds,
-          triggerCountAfter: matchedRule.triggerCount,
-          maxTriggerCount: matchedRule.maxTriggerCount,
-          autoDisabledAfterTrigger: false,
-          sendAttemptCount: 0,
-          actualSendCount: 0,
-          warningMessages,
-          senderResults,
-          errorMessage: null,
-          action: activeExecutionLock
-            ? `Skipped duplicate send for rule "${matchedRule.triggerPhrase}" because an accepted execution is already in progress.`
-            : `Skipped duplicate send for rule "${matchedRule.triggerPhrase}".`,
+      if (matchedRule) {
+        const senderTargetBuildResult = buildSenderTargets({
+          matchedRule,
+          webhookBotId: input.botId,
+          recallBots: sessionBots,
         });
-      } else {
-        const previousMatchTime = matchedRule.lastMatchedAt
-          ? new Date(matchedRule.lastMatchedAt).getTime()
-          : null;
-        const cooldownMs = matchedRule.cooldownSeconds * 1000;
-        const cooldownReady =
-          previousMatchTime === null ||
-          cooldownMs === 0 ||
-          receivedAt.getTime() - previousMatchTime >= cooldownMs;
+        const senderBotIdsUsed = senderTargetBuildResult.senderTargets
+          .map((senderTarget) => senderTarget.senderBotId)
+          .filter((senderBotId): senderBotId is string => Boolean(senderBotId));
+        const acceptedExecutionLockKey = `${matchedRule.id}:${normalizedTranscriptText}`;
+        const recentDuplicate = sessionMatchLogs.find((log) => {
+          if (log.ruleId !== matchedRule.id) {
+            return false;
+          }
 
-        if (cooldownReady) {
-          const triggerExecutionId = randomUUID();
-          const acceptedAtIso = receivedAt.toISOString();
-          activeTriggerExecutionLocks.set(acceptedExecutionLockKey, {
-            executionId: triggerExecutionId,
-            acceptedAt: receivedAt.getTime(),
-          });
-          matchedRule.lastMatchedAt = acceptedAtIso;
+          if (log.normalizedTranscriptText !== normalizedTranscriptText) {
+            return false;
+          }
 
-          try {
-            // Local MVP waits inline before sending and logging. In production,
-            // delayed sends should move to a background job or queue.
-            await delay(matchedRule.responseDelaySeconds * 1000);
+          return (
+            receivedAt.getTime() - new Date(log.createdAt).getTime() < dedupeWindowMs
+          );
+        });
+        const activeExecutionLock = activeTriggerExecutionLocks.get(
+          acceptedExecutionLockKey,
+        );
 
-            const createdAt = new Date().toISOString();
-            matchedRule.lastTriggeredAt = createdAt;
-            matchedRule.triggerCount += 1;
+        if (recentDuplicate || activeExecutionLock) {
+          const senderResults: MatchSenderResult[] =
+            senderTargetBuildResult.senderTargets.map((senderTarget) => ({
+              senderBotId: senderTarget.senderBotId,
+              senderBotName: senderTarget.senderBotName,
+              status: "skipped_dedupe",
+              errorMessage: null,
+              action: senderTarget.senderBotId
+                ? activeExecutionLock
+                  ? `Skipped duplicate send for ${senderTarget.senderBotName ?? senderTarget.senderBotId} because another accepted execution is already in progress.`
+                  : `Skipped duplicate send for ${senderTarget.senderBotName ?? senderTarget.senderBotId}`
+                : activeExecutionLock
+                  ? "Skipped duplicate send because another accepted execution is already in progress for this rule and transcript."
+                  : "Skipped duplicate send because the same rule and transcript already fired recently.",
+            }));
+          const createdAt = new Date().toISOString();
+          const warningMessages = [...senderTargetBuildResult.warningMessages];
 
-            const executionResult = await executeSenderTargets({
-              triggerExecutionId,
-              senderTargets: senderTargetBuildResult.senderTargets,
-              replyMessage: matchedRule.replyMessage,
-              sendChatEnabled,
-            });
-            const firstFailure = executionResult.senderResults.find(
-              (senderResult) => senderResult.status === "failed",
+          if (activeExecutionLock) {
+            warningMessages.push(
+              `Active accepted execution lock prevented a duplicate send for ${acceptedExecutionLockKey}.`,
             );
-            const status = deriveMatchStatus(executionResult.senderResults);
-            const autoDisabledAfterTrigger =
-              hasReachedMaxTriggerCount(matchedRule) && matchedRule.enabled;
+          }
 
-            if (autoDisabledAfterTrigger) {
-              matchedRule.enabled = false;
-            }
+          matchedLogs.push({
+            id: randomUUID(),
+            sessionId,
+            botId: input.botId,
+            triggerExecutionId: activeExecutionLock?.executionId ?? null,
+            sourceEvent: input.sourceEvent,
+            sourceWebhookBotId: input.botId,
+            ruleId: matchedRule.id,
+            triggerPhrase: matchedRule.triggerPhrase,
+            replyMessage: matchedRule.replyMessage,
+            transcriptText,
+            normalizedTranscriptText,
+            createdAt,
+            status: "skipped_dedupe",
+            senderMode: matchedRule.senderMode,
+            senderBotIdsUsed,
+            originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
+            dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
+            chosenRoundRobinBotId: senderTargetBuildResult.chosenRoundRobinBotId,
+            chosenRoundRobinBotName: senderTargetBuildResult.chosenRoundRobinBotName,
+            previousRoundRobinIndex: senderTargetBuildResult.previousRoundRobinIndex,
+            nextRoundRobinIndex: senderTargetBuildResult.nextRoundRobinIndex,
+            responseDelaySeconds: matchedRule.responseDelaySeconds,
+            triggerCountAfter: matchedRule.triggerCount,
+            maxTriggerCount: matchedRule.maxTriggerCount,
+            autoDisabledAfterTrigger: false,
+            sendAttemptCount: 0,
+            actualSendCount: 0,
+            warningMessages,
+            senderResults,
+            errorMessage: null,
+            action: activeExecutionLock
+              ? `Skipped duplicate send for rule "${matchedRule.triggerPhrase}" because an accepted execution is already in progress.`
+              : `Skipped duplicate send for rule "${matchedRule.triggerPhrase}".`,
+          });
+        } else {
+          const previousMatchTime = matchedRule.lastMatchedAt
+            ? new Date(matchedRule.lastMatchedAt).getTime()
+            : null;
+          const cooldownMs = matchedRule.cooldownSeconds * 1000;
+          const cooldownReady =
+            previousMatchTime === null ||
+            cooldownMs === 0 ||
+            receivedAt.getTime() - previousMatchTime >= cooldownMs;
 
-            if (
-              matchedRule.senderMode === "round_robin_bots" &&
-              senderTargetBuildResult.chosenRoundRobinBotId
-            ) {
-              matchedRule.nextSenderIndex =
-                senderTargetBuildResult.nextRoundRobinIndex ??
-                matchedRule.nextSenderIndex;
-            }
-
-            matchedLogs.push({
-              id: randomUUID(),
-              sessionId,
-              botId: input.botId,
-              triggerExecutionId,
-              sourceEvent: input.sourceEvent,
-              sourceWebhookBotId: input.botId,
-              ruleId: matchedRule.id,
-              triggerPhrase: matchedRule.triggerPhrase,
-              replyMessage: matchedRule.replyMessage,
-              transcriptText,
-              normalizedTranscriptText,
-              createdAt,
-              status,
-              senderMode: matchedRule.senderMode,
-              senderBotIdsUsed,
-              originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
-              dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
-              chosenRoundRobinBotId: senderTargetBuildResult.chosenRoundRobinBotId,
-              chosenRoundRobinBotName:
-                senderTargetBuildResult.chosenRoundRobinBotName,
-              previousRoundRobinIndex:
-                senderTargetBuildResult.previousRoundRobinIndex,
-              nextRoundRobinIndex:
-                matchedRule.senderMode === "round_robin_bots"
-                  ? matchedRule.nextSenderIndex
-                  : senderTargetBuildResult.nextRoundRobinIndex,
-              responseDelaySeconds: matchedRule.responseDelaySeconds,
-              triggerCountAfter: matchedRule.triggerCount,
-              maxTriggerCount: matchedRule.maxTriggerCount,
-              autoDisabledAfterTrigger,
-              sendAttemptCount: executionResult.sendAttemptCount,
-              actualSendCount: executionResult.actualSendCount,
-              warningMessages: senderTargetBuildResult.warningMessages,
-              senderResults: executionResult.senderResults,
-              errorMessage: firstFailure?.errorMessage ?? null,
-              action: executionResult.senderResults
-                .map((senderResult) => senderResult.action)
-                .join(" | "),
+          if (cooldownReady) {
+            const triggerExecutionId = randomUUID();
+            const acceptedAtIso = receivedAt.toISOString();
+            activeTriggerExecutionLocks.set(acceptedExecutionLockKey, {
+              executionId: triggerExecutionId,
+              acceptedAt: receivedAt.getTime(),
             });
-          } finally {
-            activeTriggerExecutionLocks.delete(acceptedExecutionLockKey);
+            matchedRule.lastMatchedAt = acceptedAtIso;
+
+            try {
+              // Local MVP waits inline before sending and logging. In production,
+              // delayed sends should move to a background job or queue.
+              await delay(matchedRule.responseDelaySeconds * 1000);
+
+              const createdAt = new Date().toISOString();
+              matchedRule.lastTriggeredAt = createdAt;
+              matchedRule.triggerCount += 1;
+
+              const executionResult = await executeSenderTargets({
+                triggerExecutionId,
+                senderTargets: senderTargetBuildResult.senderTargets,
+                replyMessage: matchedRule.replyMessage,
+                sendChatEnabled,
+              });
+              const firstFailure = executionResult.senderResults.find(
+                (senderResult) => senderResult.status === "failed",
+              );
+              const status = deriveMatchStatus(executionResult.senderResults);
+              const autoDisabledAfterTrigger =
+                hasReachedMaxTriggerCount(matchedRule) && matchedRule.enabled;
+
+              if (autoDisabledAfterTrigger) {
+                matchedRule.enabled = false;
+              }
+
+              if (
+                matchedRule.senderMode === "round_robin_bots" &&
+                senderTargetBuildResult.chosenRoundRobinBotId
+              ) {
+                matchedRule.nextSenderIndex =
+                  senderTargetBuildResult.nextRoundRobinIndex ??
+                  matchedRule.nextSenderIndex;
+              }
+
+              matchedLogs.push({
+                id: randomUUID(),
+                sessionId,
+                botId: input.botId,
+                triggerExecutionId,
+                sourceEvent: input.sourceEvent,
+                sourceWebhookBotId: input.botId,
+                ruleId: matchedRule.id,
+                triggerPhrase: matchedRule.triggerPhrase,
+                replyMessage: matchedRule.replyMessage,
+                transcriptText,
+                normalizedTranscriptText,
+                createdAt,
+                status,
+                senderMode: matchedRule.senderMode,
+                senderBotIdsUsed,
+                originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
+                dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
+                chosenRoundRobinBotId: senderTargetBuildResult.chosenRoundRobinBotId,
+                chosenRoundRobinBotName:
+                  senderTargetBuildResult.chosenRoundRobinBotName,
+                previousRoundRobinIndex:
+                  senderTargetBuildResult.previousRoundRobinIndex,
+                nextRoundRobinIndex:
+                  matchedRule.senderMode === "round_robin_bots"
+                    ? matchedRule.nextSenderIndex
+                    : senderTargetBuildResult.nextRoundRobinIndex,
+                responseDelaySeconds: matchedRule.responseDelaySeconds,
+                triggerCountAfter: matchedRule.triggerCount,
+                maxTriggerCount: matchedRule.maxTriggerCount,
+                autoDisabledAfterTrigger,
+                sendAttemptCount: executionResult.sendAttemptCount,
+                actualSendCount: executionResult.actualSendCount,
+                warningMessages: senderTargetBuildResult.warningMessages,
+                senderResults: executionResult.senderResults,
+                errorMessage: firstFailure?.errorMessage ?? null,
+                action: executionResult.senderResults
+                  .map((senderResult) => senderResult.action)
+                  .join(" | "),
+              });
+            } finally {
+              activeTriggerExecutionLocks.delete(acceptedExecutionLockKey);
+            }
           }
         }
       }
     }
 
-    const transcriptLog: TranscriptLog = {
-      id: randomUUID(),
+    const transcriptLog = buildTranscriptLog({
       sessionId,
       botId: input.botId,
       transcriptText,
@@ -3579,7 +4487,7 @@ export async function processTranscriptWebhook(input: {
       matchedRuleIds: matchedLogs.map((log) => log.ruleId),
       sourceEvent: input.sourceEvent,
       createdAt: receivedAt.toISOString(),
-    };
+    });
 
     if (shouldPersistTranscriptLog(store)) {
       store.transcriptLogs.unshift(transcriptLog);
@@ -3861,22 +4769,26 @@ export async function runDueScheduledBotJoins(): Promise<{
 
       for (let index = 0; index < scheduledBotJoin.botNames.length; index += 1) {
         const botName = scheduledBotJoin.botNames[index];
+        const role = getBotRoleForCreationIndex(index);
 
         try {
           const createRequestPayload = buildCreateRecallBotPayload({
             meetingUrl,
             botName,
             transcriptLanguage: scheduledBotJoin.transcriptLanguage,
+            role,
           });
           const rawRecallResponse = await createRecallBot({
             meetingUrl,
             botName,
             transcriptLanguage: scheduledBotJoin.transcriptLanguage,
+            role,
           });
           const recallBotRecord = appendRecallBotRecordToStore(store, {
             sessionId: scheduledBotJoin.sessionId,
             meetingUrl,
             botName,
+            role,
             transcriptLanguage: scheduledBotJoin.transcriptLanguage,
             createRequestPayload,
             rawRecallResponse,

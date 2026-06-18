@@ -1,4 +1,5 @@
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
+import type { RecallBotRole } from "@/lib/types";
 
 function getRequiredEnvVar(name: "RECALL_API_KEY" | "RECALL_REGION"): string {
   const value = process.env[name]?.trim();
@@ -223,14 +224,15 @@ export function buildCreateRecallBotPayload(input: {
   meetingUrl: string;
   botName: string;
   transcriptLanguage: string;
+  role?: RecallBotRole;
   maskAutomationBypassSecret?: boolean;
 }): Record<string, unknown> {
   const webhookUrl = input.maskAutomationBypassSecret
     ? getRecallWebhookUrl()
     : getRecallWebhookUrlForRecall();
   const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
-
-  return {
+  const role = input.role ?? "listener";
+  const payload: Record<string, unknown> = {
     meeting_url: input.meetingUrl,
     bot_name: input.botName,
     chat: {
@@ -239,7 +241,10 @@ export function buildCreateRecallBotPayload(input: {
         message: "Bot joined. Please ignore me, sorry.",
       },
     },
-    recording_config: {
+  };
+
+  if (role === "listener") {
+    payload.recording_config = {
       transcript: {
         provider: {
           deepgram_streaming: {
@@ -255,11 +260,13 @@ export function buildCreateRecallBotPayload(input: {
         {
           type: "webhook",
           url: webhookUrl,
-          events: ["transcript.data"],
+          events: ["transcript.data", "transcript.partial_data"],
         },
       ],
-    },
-  };
+    };
+  }
+
+  return payload;
 }
 
 export async function sendRecallChatMessage(
@@ -301,6 +308,7 @@ export async function createRecallBot(input: {
   meetingUrl: string;
   botName: string;
   transcriptLanguage: string;
+  role?: RecallBotRole;
 }): Promise<Record<string, unknown>> {
   const endpoint = buildRecallBotEndpoint("/api/v1/bot/");
   const payload = buildCreateRecallBotPayload(input);

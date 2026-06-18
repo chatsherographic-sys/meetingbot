@@ -10,7 +10,7 @@ const SETTINGS_ROW_ID = "app_settings";
 
 type JsonRecord = Record<string, unknown>;
 
-function createServiceRoleClient(): SupabaseClient {
+export function createSupabaseServiceRoleClient(): SupabaseClient {
   const configError = getSupabaseStorageConfigError();
 
   if (configError) {
@@ -98,6 +98,7 @@ function mapStoreToRows(store: StoreData) {
       recall_bot_id: bot.recallBotId,
       meeting_url: bot.meetingUrl,
       bot_name: bot.botName,
+      role: bot.role,
       transcript_language: bot.transcriptLanguage,
       webhook_url: bot.webhookUrl,
       status: bot.status,
@@ -355,10 +356,10 @@ export function createSupabaseStoreAdapter(
   return {
     driver: "supabase",
     async initialize() {
-      createServiceRoleClient();
+      createSupabaseServiceRoleClient();
     },
     async readStore() {
-      const client = createServiceRoleClient();
+      const client = createSupabaseServiceRoleClient();
       const data = await fetchAllTableData(client);
 
       return options.normalizeStoreData({
@@ -387,6 +388,10 @@ export function createSupabaseStoreAdapter(
           recallBotId: String(bot.recall_bot_id ?? ""),
           meetingUrl: String(bot.meeting_url ?? ""),
           botName: String(bot.bot_name ?? ""),
+          role:
+            typeof bot.role === "string"
+              ? bot.role
+              : undefined,
           transcriptLanguage: String(bot.transcript_language ?? ""),
           webhookUrl: String(bot.webhook_url ?? ""),
           status: String(bot.status ?? "created"),
@@ -617,7 +622,7 @@ export function createSupabaseStoreAdapter(
       });
     },
     async writeStore(data) {
-      const client = createServiceRoleClient();
+      const client = createSupabaseServiceRoleClient();
       const rows = mapStoreToRows(data);
 
       const { error: settingsError } = await client

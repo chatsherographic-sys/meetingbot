@@ -25,6 +25,7 @@ Included:
 
 - Meeting Sessions
 - Recall bot creation from `/bots`
+- listener and sender bot roles for multi-bot meetings
 - scheduled bot joins from `/scheduled-bots`
 - scheduled bot joins are idempotent and create only one batch after completion
 - bot status auto-refresh and stop actions
@@ -159,6 +160,8 @@ Vercel note:
 ### `/bots`
 
 - create one bot or many bots
+- manual single-bot creation creates one listener bot
+- bulk bot creation creates the first bot as `listener` and the rest as `sender`
 - custom bot names for bulk creation
 - scoped to current session
 - transcript language is locked to `Chinese (zh-CN)` for new bots
@@ -187,6 +190,7 @@ Vercel note:
 ### `/scheduled-bots`
 
 - create scheduled bot joins
+- scheduled multi-bot joins create the first bot as `listener` and the rest as `sender`
 - edit scheduled bot joins
 - enable or disable schedules
 - cancel schedules
@@ -560,6 +564,9 @@ Bot creation rules:
 - the backend looks up `session.zoomUrl` and uses it as `meeting_url`
 - the backend does not trust a frontend `meeting_url`
 - transcript language is fixed to `zh-CN` even if the browser submits a different value
+- single-bot creation creates one `listener` bot
+- bulk creation creates the first bot as `listener` and all remaining bots as `sender`
+- sender bots still join the meeting and can send chat, but they do not include transcript config or realtime transcript endpoints
 - if the current session has no Zoom URL, bot creation is rejected
 - if the current session is not `active`, bot creation is rejected
 - if Recall environment variables are missing, bot creation is rejected before sending the Recall API request
@@ -585,6 +592,7 @@ Rules:
 - new schedules always use the current sidebar session
 - the schedule uses its saved `sessionId` and that session's Zoom URL when it runs
 - new scheduled joins are locked to `zh-CN` transcription
+- scheduled multi-bot creation uses the first bot as `listener` and the rest as `sender`
 - schedule creation is blocked if no current session is selected
 - schedule creation is blocked if the current sidebar session has no Zoom URL
 - schedule creation is blocked if the current sidebar session is ended or archived
@@ -908,6 +916,11 @@ Trigger matching only runs for:
 - `transcript.data`
 - `transcript.partial_data`
 
+Transcript matching safety:
+
+- listener bots are the only bots that should transcribe and trigger rules
+- if a sender-only bot somehow emits transcript events, the app ignores them for trigger matching
+
 Transcript extraction supports:
 
 - `data.data.words`
@@ -1091,11 +1104,12 @@ http://localhost:3000/dashboard
 ## Supabase Test Checklist
 
 1. Run `supabase/migrations/001_initial_schema.sql`.
-2. Set `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`.
-3. Set `STORAGE_DRIVER=supabase`.
-4. Restart `npm.cmd run dev`.
-5. Open `/diagnostics` and confirm `Storage Health` is `ok`.
-6. Create a meeting session and confirm the row appears in Supabase.
+2. Run `supabase/migrations/002_recall_bot_roles.sql` if your Supabase project was created before bot roles were added.
+3. Set `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`.
+4. Set `STORAGE_DRIVER=supabase`.
+5. Restart `npm.cmd run dev`.
+6. Open `/diagnostics` and confirm `Storage Health` is `ok`.
+7. Create a meeting session and confirm the row appears in Supabase.
 
 ## Vercel Deployment Checklist
 
@@ -1203,3 +1217,4 @@ Invoke-RestMethod `
 - The app now uses word triggers and timer triggers only.
 - Historical `data/store.json` files that still contain old AI keys are tolerated; the app ignores those legacy fields.
 - Local JSON storage is still used in this MVP, but writes are now queued, atomic, and backed up for recovery.
+- Recommended production meeting setup is one listener bot per meeting and extra sender-only bots only when needed. This reduces duplicate transcripts, storage load, Supabase queries, cost, and Zoom chat delay.

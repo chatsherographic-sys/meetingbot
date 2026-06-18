@@ -17,6 +17,7 @@ npm.cmd run build
 
 ```text
 supabase/migrations/001_initial_schema.sql
+supabase/migrations/002_recall_bot_roles.sql
 ```
 
 The migration keeps RLS enabled and adds the required `service_role` grants for
@@ -48,6 +49,9 @@ Important notes:
 - Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
 - `NEXT_PUBLIC_SUPABASE_URL` is safe for the browser, but the service role key is not.
 - `RECALL_API_KEY` must stay server-side only.
+- Recommended production bot setup is one listener bot per meeting and extra sender-only bots only when needed.
+- Listener bots include transcript config and webhook delivery.
+- Sender bots join the meeting and can send chat, but they do not transcribe.
 - After the first deployment, update `PUBLIC_WEBHOOK_BASE_URL` if the final Vercel URL changes.
 - If Vercel Authentication stays enabled, set `VERCEL_AUTOMATION_BYPASS_SECRET` so Recall can reach the protected webhook endpoint.
 - If the bypass secret changes, redeploy and create a new bot because existing bots keep the old webhook URL.

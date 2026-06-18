@@ -23,6 +23,7 @@ create table if not exists public.recall_bots (
   recall_bot_id text not null,
   meeting_url text not null,
   bot_name text not null,
+  role text not null default 'listener',
   transcript_language text not null,
   webhook_url text not null,
   status text not null,
@@ -34,6 +35,9 @@ create table if not exists public.recall_bots (
   create_request_payload jsonb not null default '{}'::jsonb,
   raw_recall_response jsonb not null default '{}'::jsonb
 );
+
+alter table public.recall_bots
+add column if not exists role text not null default 'listener';
 
 create table if not exists public.scheduled_bot_joins (
   id text primary key,
