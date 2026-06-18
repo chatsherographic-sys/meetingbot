@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseStorageConfigError } from "@/lib/storage/config";
-import type { MatchSenderResult, StoreData } from "@/lib/types";
+import type { MatchLog, MatchSenderResult, StoreData } from "@/lib/types";
 import type {
   StorageAdapter,
   StorageAdapterFactoryOptions,
@@ -191,6 +191,7 @@ function mapStoreToRows(store: StoreData) {
       actual_send_count: log.actualSendCount,
       warning_messages: log.warningMessages,
       sender_results: log.senderResults,
+      latency_diagnostics: log.latencyDiagnostics,
       error_message: log.errorMessage,
       action: log.action,
     })),
@@ -557,6 +558,12 @@ export function createSupabaseStoreAdapter(
           actualSendCount: Number(log.actual_send_count ?? 0),
           warningMessages: normalizeJsonArray(log.warning_messages),
           senderResults: normalizeSenderResults(log.sender_results),
+          latencyDiagnostics:
+            log.latency_diagnostics &&
+            typeof log.latency_diagnostics === "object" &&
+            !Array.isArray(log.latency_diagnostics)
+              ? (log.latency_diagnostics as MatchLog["latencyDiagnostics"])
+              : null,
           errorMessage:
             typeof log.error_message === "string" ? log.error_message : null,
           action: String(log.action ?? ""),

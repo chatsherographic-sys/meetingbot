@@ -96,6 +96,20 @@ export type MatchSenderResult = {
   action: string;
 };
 
+export type MatchLogLatencyDiagnostics = {
+  webhookReceivedAt: string | null;
+  transcriptExtractedAt: string | null;
+  triggerMatchStartedAt: string | null;
+  triggerMatchedAt: string | null;
+  sendChatStartedAt: string | null;
+  sendChatCompletedAt: string | null;
+  logSavedAt: string | null;
+  totalProcessingMs: number | null;
+  triggerMatchMs: number | null;
+  sendChatMs: number | null;
+  storageWriteMs: number | null;
+};
+
 export type MatchLog = {
   id: string;
   sessionId: string;
@@ -126,6 +140,7 @@ export type MatchLog = {
   actualSendCount: number;
   warningMessages: string[];
   senderResults: MatchSenderResult[];
+  latencyDiagnostics: MatchLogLatencyDiagnostics | null;
   errorMessage: string | null;
   action: string;
 };

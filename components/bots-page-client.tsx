@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildQueryString,
   formatTime,
+  isDocumentVisible,
   type ListPagination,
   readJsonResponse,
   type PanelMessage,
@@ -72,6 +73,8 @@ export function BotsPageClient({
   const { currentSession, currentSessionId } = useMeetingSession();
   const [bots, setBots] = useState<RecallBotRecord[]>([]);
   const [hasRefreshableBots, setHasRefreshableBots] = useState(false);
+  const [currentSessionHasActiveListener, setCurrentSessionHasActiveListener] =
+    useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [botSubmitting, setBotSubmitting] = useState(false);
@@ -200,6 +203,11 @@ export function BotsPageClient({
     }>(allBotsResponse);
 
     setBots(filteredPayload.recallBots);
+    setCurrentSessionHasActiveListener(
+      allBotsPayload.recallBots.some(
+        (bot) => isBotActiveStatus(bot.status) && bot.role === "listener",
+      ),
+    );
     setHasRefreshableBots(
       allBotsPayload.recallBots.some((bot) => isBotActiveStatus(bot.status)),
     );
@@ -275,6 +283,10 @@ export function BotsPageClient({
     void load();
 
     const interval = window.setInterval(() => {
+      if (!isDocumentVisible()) {
+        return;
+      }
+
       void loadBots().catch(() => {
         // The next polling cycle can recover without interrupting the page.
       });
@@ -292,6 +304,10 @@ export function BotsPageClient({
     }
 
     const interval = window.setInterval(() => {
+      if (!isDocumentVisible()) {
+        return;
+      }
+
       void performRefreshAllStatuses();
     }, 10000);
 
@@ -821,10 +837,20 @@ export function BotsPageClient({
                 <input id="webhookUrl" value={webhookUrl} readOnly />
               </div>
               <p className="helper-text">
-                The first bot is created as the listener that transcribes audio.
-                Extra bots are sender-only so they can still send chat without
-                duplicating transcript load.
+                Each session uses one listener bot. Extra bots are sender-only
+                to reduce delay.
               </p>
+              {currentSessionHasActiveListener ? (
+                <p className="helper-text">
+                  This session already has a listener. New bots will be
+                  sender-only.
+                </p>
+              ) : (
+                <p className="helper-text">
+                  This session has no active listener yet. The first successful
+                  new bot will become the listener.
+                </p>
+              )}
 
               <div className="actions">
                 <button

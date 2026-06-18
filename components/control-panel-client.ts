@@ -63,6 +63,10 @@ export function buildQueryString(
   return queryString ? `?${queryString}` : "";
 }
 
+export function isDocumentVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
+
 async function fetchControlPanelData(): Promise<ControlPanelData> {
   return fetchControlPanelDataForSession();
 }
@@ -174,6 +178,10 @@ export function useControlPanelData(options?: { pollMs?: number; sessionId?: str
     }
 
     const interval = window.setInterval(() => {
+      if (!isDocumentVisible()) {
+        return;
+      }
+
       void fetchControlPanelDataForSession(sessionId)
         .then((nextData) => {
           if (!active) {

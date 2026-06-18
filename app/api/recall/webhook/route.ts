@@ -22,6 +22,7 @@ export async function POST(request: Request) {
   let botId: string | null = null;
   let sessionId: string | null = null;
   let extractedTranscriptText: string | null = null;
+  let transcriptExtractedAt: string | null = null;
   let shouldPersistNormalWebhookLogs = false;
 
   try {
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
     botId = extractWebhookBotId(rawPayload);
     sessionId = await findSessionIdForRecallBotId(botId);
     extractedTranscriptText = extractTranscriptTextFromWebhook(rawPayload);
+    transcriptExtractedAt = new Date().toISOString();
     shouldPersistNormalWebhookLogs =
       (await getAppSettings()).storageLoggingMode === "debug";
 
@@ -39,6 +41,8 @@ export async function POST(request: Request) {
         botId,
         transcriptText: extractedTranscriptText ?? "",
         sourceEvent: eventName,
+        webhookReceivedAt: receivedAt,
+        transcriptExtractedAt,
       });
 
       // Storage / Logging Mode should only affect what gets persisted.

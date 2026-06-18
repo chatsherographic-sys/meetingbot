@@ -161,6 +161,7 @@ Vercel note:
 
 - create one bot or many bots
 - manual single-bot creation creates one listener bot
+- manual bot creation checks whether the current session already has an active listener
 - bulk bot creation creates the first bot as `listener` and the rest as `sender`
 - custom bot names for bulk creation
 - scoped to current session
@@ -191,6 +192,7 @@ Vercel note:
 
 - create scheduled bot joins
 - scheduled multi-bot joins create the first bot as `listener` and the rest as `sender`
+- scheduled runs check at run time whether the session already has an active listener
 - edit scheduled bot joins
 - enable or disable schedules
 - cancel schedules
@@ -347,6 +349,7 @@ Behavior:
 - timer trigger logs are saved only when a timer executes or fails
 - `skipped_not_due` timer cycles are not written every 10 seconds
 - if something fails, an error log is still saved
+- trigger execution still happens immediately when `/api/recall/webhook` receives the transcript event
 
 ### `debug`
 
@@ -547,6 +550,7 @@ Protection rules:
 - sender bot IDs are deduped before sending
 - one accepted trigger execution can send only once per unique sender bot
 - `transcript.data` and `transcript.partial_data` should not both cause the same accepted execution to send twice
+- repeated identical `transcript.partial_data` payloads from the same bot are lightly suppressed before full trigger processing to reduce overload
 
 Internal duplicate-skip outcomes are kept for protection, but they are not shown as a normal user-facing status filter.
 
@@ -565,7 +569,9 @@ Bot creation rules:
 - the backend does not trust a frontend `meeting_url`
 - transcript language is fixed to `zh-CN` even if the browser submits a different value
 - single-bot creation creates one `listener` bot
-- bulk creation creates the first bot as `listener` and all remaining bots as `sender`
+- if the current session has no active listener bot, the first successfully created new bot becomes `listener`
+- if the current session already has an active listener bot, new bots default to `sender`
+- bulk creation uses at most one listener for the session and makes the rest `sender`
 - sender bots still join the meeting and can send chat, but they do not include transcript config or realtime transcript endpoints
 - if the current session has no Zoom URL, bot creation is rejected
 - if the current session is not `active`, bot creation is rejected
@@ -593,6 +599,8 @@ Rules:
 - the schedule uses its saved `sessionId` and that session's Zoom URL when it runs
 - new scheduled joins are locked to `zh-CN` transcription
 - scheduled multi-bot creation uses the first bot as `listener` and the rest as `sender`
+- at run time, if the session already has an active listener, all scheduled bots are created as `sender`
+- if the session has no active listener at run time, the first successfully created scheduled bot becomes `listener`
 - schedule creation is blocked if no current session is selected
 - schedule creation is blocked if the current sidebar session has no Zoom URL
 - schedule creation is blocked if the current sidebar session is ended or archived
@@ -911,6 +919,12 @@ For every webhook request, the app stores:
 
 When `Storage / Logging Mode` is `production_minimal`, these normal webhook and transcript debug records are intentionally suppressed to save storage. Switch to `debug` when you need full troubleshooting data again.
 
+Trigger execution is event-driven:
+
+- `/api/recall/webhook` processes transcript events as soon as the webhook is received
+- page refresh timing only affects when you see updated logs in the UI
+- UI polling delay is not the same thing as trigger execution delay
+
 Trigger matching only runs for:
 
 - `transcript.data`
@@ -940,12 +954,31 @@ Debugging guide:
 - if `production_minimal` is enabled, normal webhook and transcript logs are intentionally suppressed
 - if the saved create-bot payload shows a localhost webhook URL, Recall cannot deliver real internet webhook events to this app
 - if `data/store.json` is corrupted and no valid backup exists, webhook requests now return a clear `500` JSON error instead of a raw crash
+- matched trigger latency fields help show whether delay is coming from transcript arrival, trigger matching, storage, or Zoom `send_chat_message`
 
 Deepgram note:
 
 - when using `deepgram_streaming`, the Deepgram API key must be configured inside the Recall dashboard for your Recall region
 - it is not stored in this app's `.env.local`
 - if Deepgram is missing in Recall, the bot may join Zoom but transcription can still fail
+
+## Refresh Intervals
+
+The app does not reduce every page to 1 second polling because that can create unnecessary load on Vercel, Supabase, and the browser without improving actual trigger speed.
+
+Current UI refresh behavior:
+
+- `/webhooks`, `/transcripts`, and `/matched-triggers` refresh about every 3 seconds while the page is visible
+- `/bots` status refresh stays about every 10 seconds while the page is visible
+- `/scheduled-bots` due-check stays about every 10 seconds while the page is visible
+- `/timer-triggers` due-check stays about every 5 seconds while the page is visible
+- hidden browser tabs skip these polling cycles
+
+Recommended production pattern:
+
+- keep trigger execution event-driven from the webhook
+- use 1 listener bot plus sender-only bots to reduce duplicate transcript load
+- use latency logs to identify whether delay is coming from Recall transcription, webhook handling, storage, or Zoom send chat
 
 ## Preflight Checks
 

@@ -5,7 +5,11 @@ import {
   getRecallPreflight,
 } from "@/lib/recall";
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
-import { getMeetingSessionById, saveRecallBotRecord } from "@/lib/store";
+import {
+  getMeetingSessionById,
+  hasActiveListenerBotBySession,
+  saveRecallBotRecord,
+} from "@/lib/store";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import type { RecallBotRecord, RecallBotRole } from "@/lib/types";
 
@@ -90,10 +94,6 @@ function ensureValidBotNames(
   });
 }
 
-function getBotRoleForIndex(index: number): RecallBotRole {
-  return index === 0 ? "listener" : "sender";
-}
-
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -144,9 +144,19 @@ export async function POST(request: Request) {
     const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
     const botCount = ensureValidBotCount(body.botCount);
     const botNames = ensureValidBotNames(body.botNames, botNamePrefix, botCount);
+    let sessionHasActiveListener = await hasActiveListenerBotBySession(sessionId);
+    let listenerCreatedInRequest = false;
+
+    const getNextBotRole = (): RecallBotRole => {
+      if (sessionHasActiveListener || listenerCreatedInRequest) {
+        return "sender";
+      }
+
+      return "listener";
+    };
 
     if (botCount === 1) {
-      const role = getBotRoleForIndex(0);
+      const role = getNextBotRole();
       const createRequestPayload = buildCreateRecallBotPayload({
         meetingUrl,
         botName: botNames[0],
@@ -171,6 +181,11 @@ export async function POST(request: Request) {
         rawRecallResponse,
       });
 
+      if (role === "listener") {
+        sessionHasActiveListener = true;
+        listenerCreatedInRequest = true;
+      }
+
       return NextResponse.json({ recallBot }, { status: 201 });
     }
 
@@ -179,7 +194,7 @@ export async function POST(request: Request) {
 
     for (let index = 0; index < botCount; index += 1) {
       const botName = botNames[index];
-      const role = getBotRoleForIndex(index);
+      const role = getNextBotRole();
 
       try {
         const createRequestPayload = buildCreateRecallBotPayload({
@@ -210,6 +225,11 @@ export async function POST(request: Request) {
           index: index + 1,
           recallBot,
         });
+
+        if (role === "listener") {
+          sessionHasActiveListener = true;
+          listenerCreatedInRequest = true;
+        }
       } catch (error) {
         failedAttempts.push({
           index: index + 1,

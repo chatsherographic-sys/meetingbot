@@ -10,13 +10,15 @@ import {
 } from "react";
 import {
   formatTime,
+  isDocumentVisible,
   readJsonResponse,
   type PanelMessage,
 } from "@/components/control-panel-client";
 import { useMeetingSession } from "@/components/meeting-session-context";
+import { isBotActiveStatus } from "@/lib/bot-status";
 import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
 import { FIXED_TRANSCRIPT_LANGUAGE_LABEL } from "@/lib/transcript-language";
-import type { ScheduledBotJoin } from "@/lib/types";
+import type { RecallBotRecord, ScheduledBotJoin } from "@/lib/types";
 
 type ScheduledBotJoinFormState = {
   sessionId: string;
@@ -120,6 +122,8 @@ export function ScheduledBotsPageClient({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<PanelMessage>(null);
+  const [currentSessionHasActiveListener, setCurrentSessionHasActiveListener] =
+    useState(false);
   const [lastAutoRunTime, setLastAutoRunTime] = useState<string | null>(null);
   const [lastAutoRunResult, setLastAutoRunResult] =
     useState<RunDueScheduledBotsResult>(null);
@@ -190,21 +194,38 @@ export function ScheduledBotsPageClient({
   }, [editingScheduleForm.botCount]);
 
   async function loadScheduledBotJoins() {
-    const response = await fetch(
-      `/api/scheduled-bots?pageSize=200&sessionId=${encodeURIComponent(currentSessionId)}`,
-      {
-        cache: "no-store",
-      },
-    );
+    const [schedulesResponse, botsResponse] = await Promise.all([
+      fetch(
+        `/api/scheduled-bots?pageSize=200&sessionId=${encodeURIComponent(currentSessionId)}`,
+        {
+          cache: "no-store",
+        },
+      ),
+      fetch(
+        `/api/recall/bots?pageSize=200&sessionId=${encodeURIComponent(currentSessionId)}`,
+        {
+          cache: "no-store",
+        },
+      ),
+    ]);
 
-    if (!response.ok) {
+    if (!schedulesResponse.ok || !botsResponse.ok) {
       throw new Error("Failed to load scheduled bot joins.");
     }
 
     const payload = await readJsonResponse<{
       scheduledBotJoins: ScheduledBotJoin[];
-    }>(response);
+    }>(schedulesResponse);
+    const botsPayload = await readJsonResponse<{
+      recallBots: RecallBotRecord[];
+    }>(botsResponse);
+
     setScheduledBotJoins(payload.scheduledBotJoins);
+    setCurrentSessionHasActiveListener(
+      botsPayload.recallBots.some(
+        (bot) => isBotActiveStatus(bot.status) && bot.role === "listener",
+      ),
+    );
     setError(null);
   }
 
@@ -286,6 +307,10 @@ export function ScheduledBotsPageClient({
 
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (!isDocumentVisible()) {
+        return;
+      }
+
       void performRunDueScheduledBots();
     }, 10000);
 
@@ -722,6 +747,16 @@ export function ScheduledBotsPageClient({
               Extra scheduled bots are sender-only to reduce duplicate
               transcript load.
             </p>
+            <p className="helper-text">
+              At run time, the schedule will only create a listener if the
+              session does not already have one.
+            </p>
+            {currentSessionHasActiveListener ? (
+              <p className="helper-text">
+                This session already has an active listener, so due schedules
+                will create sender-only bots.
+              </p>
+            ) : null}
           </div>
         </section>
 

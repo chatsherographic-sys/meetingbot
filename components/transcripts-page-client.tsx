@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   buildQueryString,
   formatTime,
+  isDocumentVisible,
   type ListPagination,
   readJsonResponse,
   type PanelMessage,
@@ -82,6 +83,10 @@ export function TranscriptsPageClient() {
     void load();
 
     const interval = window.setInterval(() => {
+      if (!isDocumentVisible()) {
+        return;
+      }
+
       void loadTranscriptLogs().catch(() => {
         // The next polling cycle can recover without interrupting the page.
       });

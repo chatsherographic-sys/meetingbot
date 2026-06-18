@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   buildQueryString,
   formatTime,
+  isDocumentVisible,
   type ListPagination,
   readJsonResponse,
   type PanelMessage,
@@ -95,6 +96,10 @@ export function MatchedTriggersPageClient() {
     void load();
 
     const interval = window.setInterval(() => {
+      if (!isDocumentVisible()) {
+        return;
+      }
+
       void loadMatchedTriggerLogs().catch(() => {
         // The next polling cycle can recover without interrupting the page.
       });
@@ -337,6 +342,27 @@ export function MatchedTriggersPageClient() {
                       ) : null}
                       <span className="pill">
                         Delay: {log.responseDelaySeconds}s
+                      </span>
+                      <span className="pill">
+                        Total:{" "}
+                        {log.latencyDiagnostics?.totalProcessingMs !== null &&
+                        log.latencyDiagnostics?.totalProcessingMs !== undefined
+                          ? `${log.latencyDiagnostics.totalProcessingMs}ms`
+                          : "n/a"}
+                      </span>
+                      <span className="pill">
+                        Match:{" "}
+                        {log.latencyDiagnostics?.triggerMatchMs !== null &&
+                        log.latencyDiagnostics?.triggerMatchMs !== undefined
+                          ? `${log.latencyDiagnostics.triggerMatchMs}ms`
+                          : "n/a"}
+                      </span>
+                      <span className="pill">
+                        Send:{" "}
+                        {log.latencyDiagnostics?.sendChatMs !== null &&
+                        log.latencyDiagnostics?.sendChatMs !== undefined
+                          ? `${log.latencyDiagnostics.sendChatMs}ms`
+                          : "n/a"}
                       </span>
                       <span className="pill">
                         Usage after trigger:{" "}

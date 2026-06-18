@@ -46,6 +46,7 @@ const activeTriggerExecutionLocks = new Map<
     acceptedAt: number;
   }
 >();
+const recentPartialTranscriptFingerprints = new Map<string, number>();
 
 export const emptyStore: StoreData = {
   storageLoggingMode: "production_minimal",
@@ -706,6 +707,57 @@ function migrateMatchLog(rawLog: LegacyMatchLog): MatchLog {
           .filter(Boolean)
       : [],
     senderResults,
+    latencyDiagnostics:
+      rawLog.latencyDiagnostics &&
+      typeof rawLog.latencyDiagnostics === "object" &&
+      !Array.isArray(rawLog.latencyDiagnostics)
+        ? {
+            webhookReceivedAt:
+              typeof rawLog.latencyDiagnostics.webhookReceivedAt === "string"
+                ? rawLog.latencyDiagnostics.webhookReceivedAt
+                : null,
+            transcriptExtractedAt:
+              typeof rawLog.latencyDiagnostics.transcriptExtractedAt === "string"
+                ? rawLog.latencyDiagnostics.transcriptExtractedAt
+                : null,
+            triggerMatchStartedAt:
+              typeof rawLog.latencyDiagnostics.triggerMatchStartedAt === "string"
+                ? rawLog.latencyDiagnostics.triggerMatchStartedAt
+                : null,
+            triggerMatchedAt:
+              typeof rawLog.latencyDiagnostics.triggerMatchedAt === "string"
+                ? rawLog.latencyDiagnostics.triggerMatchedAt
+                : null,
+            sendChatStartedAt:
+              typeof rawLog.latencyDiagnostics.sendChatStartedAt === "string"
+                ? rawLog.latencyDiagnostics.sendChatStartedAt
+                : null,
+            sendChatCompletedAt:
+              typeof rawLog.latencyDiagnostics.sendChatCompletedAt === "string"
+                ? rawLog.latencyDiagnostics.sendChatCompletedAt
+                : null,
+            logSavedAt:
+              typeof rawLog.latencyDiagnostics.logSavedAt === "string"
+                ? rawLog.latencyDiagnostics.logSavedAt
+                : null,
+            totalProcessingMs:
+              typeof rawLog.latencyDiagnostics.totalProcessingMs === "number"
+                ? rawLog.latencyDiagnostics.totalProcessingMs
+                : null,
+            triggerMatchMs:
+              typeof rawLog.latencyDiagnostics.triggerMatchMs === "number"
+                ? rawLog.latencyDiagnostics.triggerMatchMs
+                : null,
+            sendChatMs:
+              typeof rawLog.latencyDiagnostics.sendChatMs === "number"
+                ? rawLog.latencyDiagnostics.sendChatMs
+                : null,
+            storageWriteMs:
+              typeof rawLog.latencyDiagnostics.storageWriteMs === "number"
+                ? rawLog.latencyDiagnostics.storageWriteMs
+                : null,
+          }
+        : null,
     errorMessage:
       typeof rawLog.errorMessage === "string" ? rawLog.errorMessage : null,
     action: String(rawLog.action ?? "").trim(),
@@ -1157,6 +1209,42 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
+}
+
+function getNowIso(): string {
+  return new Date().toISOString();
+}
+
+function differenceMs(startAt: number, endAt: number): number {
+  return Math.max(0, Math.round(endAt - startAt));
+}
+
+function shouldSuppressPartialTranscriptFingerprint(input: {
+  botId: string | null;
+  normalizedTranscriptText: string;
+  receivedAtMs: number;
+  windowMs?: number;
+}): boolean {
+  if (!input.botId || !input.normalizedTranscriptText) {
+    return false;
+  }
+
+  const windowMs = input.windowMs ?? 2000;
+  const cacheKey = `${input.botId}:${input.normalizedTranscriptText}`;
+  const previousReceivedAt = recentPartialTranscriptFingerprints.get(cacheKey) ?? null;
+
+  for (const [key, timestamp] of recentPartialTranscriptFingerprints.entries()) {
+    if (input.receivedAtMs - timestamp > windowMs * 2) {
+      recentPartialTranscriptFingerprints.delete(key);
+    }
+  }
+
+  recentPartialTranscriptFingerprints.set(cacheKey, input.receivedAtMs);
+
+  return (
+    previousReceivedAt !== null &&
+    input.receivedAtMs - previousReceivedAt < windowMs
+  );
 }
 
 function normalizeSenderMode(value: SenderMode | string | undefined): SenderMode {
@@ -2509,10 +2597,6 @@ function applyRecallBotRecordError(
   return record;
 }
 
-function getBotRoleForCreationIndex(index: number): RecallBotRole {
-  return index === 0 ? "listener" : "sender";
-}
-
 function setRecallBotJoinedAtIfNeeded(
   record: RecallBotRecord,
   nextStatus: string,
@@ -3555,6 +3639,23 @@ function isListenerRecallBot(record: RecallBotRecord | null | undefined): boolea
   }) === "listener";
 }
 
+function isActiveListenerRecallBot(
+  record: RecallBotRecord | null | undefined,
+): boolean {
+  if (!record) {
+    return false;
+  }
+
+  return isBotActiveStatus(record.status) && isListenerRecallBot(record);
+}
+
+export async function hasActiveListenerBotBySession(
+  sessionId: string,
+): Promise<boolean> {
+  const activeBots = await listActiveBotsBySession(sessionId);
+  return activeBots.some((bot) => isActiveListenerRecallBot(bot));
+}
+
 function buildTranscriptLog(input: {
   sessionId: string;
   botId: string | null;
@@ -3607,6 +3708,7 @@ function mapMatchLogToSupabaseRow(log: MatchLog) {
     actual_send_count: log.actualSendCount,
     warning_messages: log.warningMessages,
     sender_results: log.senderResults,
+    latency_diagnostics: log.latencyDiagnostics,
     error_message: log.errorMessage,
     action: log.action,
   };
@@ -3872,6 +3974,12 @@ async function listRecentMatchLogsForTranscript(input: {
               };
             })
           : [],
+        latencyDiagnostics:
+          log.latency_diagnostics &&
+          typeof log.latency_diagnostics === "object" &&
+          !Array.isArray(log.latency_diagnostics)
+            ? (log.latency_diagnostics as MatchLog["latencyDiagnostics"])
+            : null,
         errorMessage:
           typeof log.error_message === "string" ? log.error_message : null,
         action: String(log.action ?? ""),
@@ -3984,6 +4092,8 @@ export async function processTranscriptWebhook(input: {
   botId: string | null;
   transcriptText: string;
   sourceEvent: "transcript.data" | "transcript.partial_data";
+  webhookReceivedAt?: string | null;
+  transcriptExtractedAt?: string | null;
 }): Promise<{
   transcriptLog: TranscriptLog;
   matchedLogs: MatchLog[];
@@ -3997,6 +4107,9 @@ export async function processTranscriptWebhook(input: {
       const transcriptText = input.transcriptText.trim();
       const normalizedTranscriptText = normalizeTranscript(transcriptText);
       const receivedAt = new Date();
+      const receivedAtMs = receivedAt.getTime();
+      const persistTranscriptLog =
+        (await getAppSettings()).storageLoggingMode === "debug";
       const transcriptLog = buildTranscriptLog({
         sessionId,
         botId: input.botId,
@@ -4007,8 +4120,22 @@ export async function processTranscriptWebhook(input: {
         createdAt: receivedAt.toISOString(),
       });
 
+      if (
+        input.sourceEvent === "transcript.partial_data" &&
+        shouldSuppressPartialTranscriptFingerprint({
+          botId: input.botId,
+          normalizedTranscriptText,
+          receivedAtMs,
+        })
+      ) {
+        return {
+          transcriptLog,
+          matchedLogs: [],
+        };
+      }
+
       if (sourceBotRecord && !isListenerRecallBot(sourceBotRecord)) {
-        if ((await getAppSettings()).storageLoggingMode === "debug") {
+        if (persistTranscriptLog) {
           await appendTranscriptLog(transcriptLog);
         }
 
@@ -4021,6 +4148,7 @@ export async function processTranscriptWebhook(input: {
       const matchedLogs: MatchLog[] = [];
       const sendChatEnabled = isRecallSendChatEnabled();
       const dedupeWindowMs = 5000;
+      const triggerMatchStartedAt = Date.now();
       const sessionRules = await listEnabledTriggerRulesBySession(sessionId);
       const sessionBots = await listRecallBotsBySession(sessionId);
 
@@ -4037,6 +4165,7 @@ export async function processTranscriptWebhook(input: {
           !hasReachedMaxTriggerCount(rule) &&
           normalizedTranscriptText.includes(rule.normalizedTrigger),
       );
+      const triggerMatchedAt = matchedRule ? Date.now() : null;
 
       if (matchedRule) {
         const senderTargetBuildResult = buildSenderTargets({
@@ -4127,12 +4256,56 @@ export async function processTranscriptWebhook(input: {
             actualSendCount: 0,
             warningMessages,
             senderResults,
+            latencyDiagnostics: {
+              webhookReceivedAt: input.webhookReceivedAt ?? receivedAt.toISOString(),
+              transcriptExtractedAt:
+                input.transcriptExtractedAt ?? receivedAt.toISOString(),
+              triggerMatchStartedAt: new Date(triggerMatchStartedAt).toISOString(),
+              triggerMatchedAt: triggerMatchedAt
+                ? new Date(triggerMatchedAt).toISOString()
+                : null,
+              sendChatStartedAt: null,
+              sendChatCompletedAt: null,
+              logSavedAt: null,
+              totalProcessingMs: null,
+              triggerMatchMs: differenceMs(
+                triggerMatchStartedAt,
+                triggerMatchedAt ?? triggerMatchStartedAt,
+              ),
+              sendChatMs: null,
+              storageWriteMs: null,
+            },
             errorMessage: null,
             action: activeExecutionLock
               ? `Skipped duplicate send for rule "${matchedRule.triggerPhrase}" because an accepted execution is already in progress.`
               : `Skipped duplicate send for rule "${matchedRule.triggerPhrase}".`,
           };
 
+          const logSaveStartedAt = Date.now();
+          if (matchedLog.latencyDiagnostics) {
+            matchedLog.latencyDiagnostics = {
+              webhookReceivedAt: matchedLog.latencyDiagnostics.webhookReceivedAt,
+              transcriptExtractedAt:
+                matchedLog.latencyDiagnostics.transcriptExtractedAt,
+              triggerMatchStartedAt:
+                matchedLog.latencyDiagnostics.triggerMatchStartedAt,
+              triggerMatchedAt: matchedLog.latencyDiagnostics.triggerMatchedAt,
+              sendChatStartedAt: matchedLog.latencyDiagnostics.sendChatStartedAt,
+              sendChatCompletedAt:
+                matchedLog.latencyDiagnostics.sendChatCompletedAt,
+              logSavedAt: getNowIso(),
+              totalProcessingMs: differenceMs(
+                Date.parse(
+                  matchedLog.latencyDiagnostics.webhookReceivedAt ??
+                    receivedAt.toISOString(),
+                ),
+                logSaveStartedAt,
+              ),
+              triggerMatchMs: matchedLog.latencyDiagnostics.triggerMatchMs,
+              sendChatMs: matchedLog.latencyDiagnostics.sendChatMs,
+              storageWriteMs: matchedLog.latencyDiagnostics.storageWriteMs,
+            };
+          }
           matchedLogs.push(matchedLog);
           await appendMatchedTriggerLog(matchedLog);
         } else {
@@ -4163,6 +4336,7 @@ export async function processTranscriptWebhook(input: {
               const createdAt = new Date().toISOString();
               matchedRule.lastTriggeredAt = createdAt;
               matchedRule.triggerCount += 1;
+              const sendChatStartedAt = Date.now();
 
               const executionResult = await executeSenderTargets({
                 triggerExecutionId,
@@ -4170,6 +4344,7 @@ export async function processTranscriptWebhook(input: {
                 replyMessage: matchedRule.replyMessage,
                 sendChatEnabled,
               });
+              const sendChatCompletedAt = Date.now();
               const firstFailure = executionResult.senderResults.find(
                 (senderResult) => senderResult.status === "failed",
               );
@@ -4228,12 +4403,66 @@ export async function processTranscriptWebhook(input: {
                 actualSendCount: executionResult.actualSendCount,
                 warningMessages: senderTargetBuildResult.warningMessages,
                 senderResults: executionResult.senderResults,
+                latencyDiagnostics: {
+                  webhookReceivedAt:
+                    input.webhookReceivedAt ?? receivedAt.toISOString(),
+                  transcriptExtractedAt:
+                    input.transcriptExtractedAt ?? receivedAt.toISOString(),
+                  triggerMatchStartedAt:
+                    new Date(triggerMatchStartedAt).toISOString(),
+                  triggerMatchedAt: triggerMatchedAt
+                    ? new Date(triggerMatchedAt).toISOString()
+                    : null,
+                  sendChatStartedAt:
+                    new Date(sendChatStartedAt).toISOString(),
+                  sendChatCompletedAt:
+                    new Date(sendChatCompletedAt).toISOString(),
+                  logSavedAt: null,
+                  totalProcessingMs: null,
+                  triggerMatchMs: differenceMs(
+                    triggerMatchStartedAt,
+                    triggerMatchedAt ?? triggerMatchStartedAt,
+                  ),
+                  sendChatMs: differenceMs(
+                    sendChatStartedAt,
+                    sendChatCompletedAt,
+                  ),
+                  storageWriteMs: null,
+                },
                 errorMessage: firstFailure?.errorMessage ?? null,
                 action: executionResult.senderResults
                   .map((senderResult) => senderResult.action)
                   .join(" | "),
               };
 
+              const logSaveStartedAt = Date.now();
+              if (matchedLog.latencyDiagnostics) {
+                matchedLog.latencyDiagnostics = {
+                  webhookReceivedAt:
+                    matchedLog.latencyDiagnostics.webhookReceivedAt,
+                  transcriptExtractedAt:
+                    matchedLog.latencyDiagnostics.transcriptExtractedAt,
+                  triggerMatchStartedAt:
+                    matchedLog.latencyDiagnostics.triggerMatchStartedAt,
+                  triggerMatchedAt:
+                    matchedLog.latencyDiagnostics.triggerMatchedAt,
+                  sendChatStartedAt:
+                    matchedLog.latencyDiagnostics.sendChatStartedAt,
+                  sendChatCompletedAt:
+                    matchedLog.latencyDiagnostics.sendChatCompletedAt,
+                  logSavedAt: getNowIso(),
+                  totalProcessingMs: differenceMs(
+                    Date.parse(
+                      matchedLog.latencyDiagnostics.webhookReceivedAt ??
+                        receivedAt.toISOString(),
+                    ),
+                    logSaveStartedAt,
+                  ),
+                  triggerMatchMs: matchedLog.latencyDiagnostics.triggerMatchMs,
+                  sendChatMs: matchedLog.latencyDiagnostics.sendChatMs,
+                  storageWriteMs: matchedLog.latencyDiagnostics.storageWriteMs,
+                };
+              }
               matchedLogs.push(matchedLog);
               await appendMatchedTriggerLog(matchedLog);
             } finally {
@@ -4248,7 +4477,7 @@ export async function processTranscriptWebhook(input: {
         matchedRuleIds: matchedLogs.map((log) => log.ruleId),
       };
 
-      if ((await getAppSettings()).storageLoggingMode === "debug") {
+      if (persistTranscriptLog) {
         await appendTranscriptLog(finalTranscriptLog);
       }
 
@@ -4269,12 +4498,39 @@ export async function processTranscriptWebhook(input: {
     const transcriptText = input.transcriptText.trim();
     const normalizedTranscriptText = normalizeTranscript(transcriptText);
     const receivedAt = new Date();
+    const receivedAtMs = receivedAt.getTime();
     const matchedLogs: MatchLog[] = [];
     const sendChatEnabled = isRecallSendChatEnabled();
     const dedupeWindowMs = 5000;
+    const triggerMatchStartedAt = Date.now();
     const sessionRules = store.triggerRules.filter((rule) => rule.sessionId === sessionId);
     const sessionBots = store.recallBots.filter((bot) => bot.sessionId === sessionId);
     const sessionMatchLogs = store.matchLogs.filter((log) => log.sessionId === sessionId);
+
+    if (
+      input.sourceEvent === "transcript.partial_data" &&
+      shouldSuppressPartialTranscriptFingerprint({
+        botId: input.botId,
+        normalizedTranscriptText,
+        receivedAtMs,
+      })
+    ) {
+      return {
+        transcriptLog: buildTranscriptLog({
+          sessionId,
+          botId: input.botId,
+          transcriptText,
+          normalizedTranscriptText,
+          matchedRuleIds: [],
+          sourceEvent: input.sourceEvent,
+          createdAt: receivedAt.toISOString(),
+        }),
+        matchedLogs: [],
+      };
+    }
+
+    let matchedRule: TriggerRule | undefined;
+    let triggerMatchedAt: number | null = null;
 
     if (!sourceBotRecord || isListenerRecallBot(sourceBotRecord)) {
       for (const rule of sessionRules) {
@@ -4284,25 +4540,27 @@ export async function processTranscriptWebhook(input: {
       }
       // Only the first enabled matching rule is allowed to fire so one
       // transcript event cannot generate duplicate Zoom chat messages.
-      const matchedRule = sessionRules.find(
+      matchedRule = sessionRules.find(
         (rule) =>
           rule.enabled &&
           !hasReachedMaxTriggerCount(rule) &&
           normalizedTranscriptText.includes(rule.normalizedTrigger),
       );
+      triggerMatchedAt = matchedRule ? Date.now() : null;
 
       if (matchedRule) {
+        const activeMatchedRule = matchedRule;
         const senderTargetBuildResult = buildSenderTargets({
-          matchedRule,
+          matchedRule: activeMatchedRule,
           webhookBotId: input.botId,
           recallBots: sessionBots,
         });
         const senderBotIdsUsed = senderTargetBuildResult.senderTargets
           .map((senderTarget) => senderTarget.senderBotId)
           .filter((senderBotId): senderBotId is string => Boolean(senderBotId));
-        const acceptedExecutionLockKey = `${matchedRule.id}:${normalizedTranscriptText}`;
+        const acceptedExecutionLockKey = `${activeMatchedRule.id}:${normalizedTranscriptText}`;
         const recentDuplicate = sessionMatchLogs.find((log) => {
-          if (log.ruleId !== matchedRule.id) {
+          if (log.ruleId !== activeMatchedRule.id) {
             return false;
           }
 
@@ -4349,14 +4607,14 @@ export async function processTranscriptWebhook(input: {
             triggerExecutionId: activeExecutionLock?.executionId ?? null,
             sourceEvent: input.sourceEvent,
             sourceWebhookBotId: input.botId,
-            ruleId: matchedRule.id,
-            triggerPhrase: matchedRule.triggerPhrase,
-            replyMessage: matchedRule.replyMessage,
+            ruleId: activeMatchedRule.id,
+            triggerPhrase: activeMatchedRule.triggerPhrase,
+            replyMessage: activeMatchedRule.replyMessage,
             transcriptText,
             normalizedTranscriptText,
             createdAt,
             status: "skipped_dedupe",
-            senderMode: matchedRule.senderMode,
+            senderMode: activeMatchedRule.senderMode,
             senderBotIdsUsed,
             originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
             dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
@@ -4364,24 +4622,43 @@ export async function processTranscriptWebhook(input: {
             chosenRoundRobinBotName: senderTargetBuildResult.chosenRoundRobinBotName,
             previousRoundRobinIndex: senderTargetBuildResult.previousRoundRobinIndex,
             nextRoundRobinIndex: senderTargetBuildResult.nextRoundRobinIndex,
-            responseDelaySeconds: matchedRule.responseDelaySeconds,
-            triggerCountAfter: matchedRule.triggerCount,
-            maxTriggerCount: matchedRule.maxTriggerCount,
+            responseDelaySeconds: activeMatchedRule.responseDelaySeconds,
+            triggerCountAfter: activeMatchedRule.triggerCount,
+            maxTriggerCount: activeMatchedRule.maxTriggerCount,
             autoDisabledAfterTrigger: false,
             sendAttemptCount: 0,
             actualSendCount: 0,
             warningMessages,
             senderResults,
+            latencyDiagnostics: {
+              webhookReceivedAt: input.webhookReceivedAt ?? receivedAt.toISOString(),
+              transcriptExtractedAt:
+                input.transcriptExtractedAt ?? receivedAt.toISOString(),
+              triggerMatchStartedAt: new Date(triggerMatchStartedAt).toISOString(),
+              triggerMatchedAt: triggerMatchedAt
+                ? new Date(triggerMatchedAt).toISOString()
+                : null,
+              sendChatStartedAt: null,
+              sendChatCompletedAt: null,
+              logSavedAt: null,
+              totalProcessingMs: null,
+              triggerMatchMs: differenceMs(
+                triggerMatchStartedAt,
+                triggerMatchedAt ?? triggerMatchStartedAt,
+              ),
+              sendChatMs: null,
+              storageWriteMs: null,
+            },
             errorMessage: null,
             action: activeExecutionLock
-              ? `Skipped duplicate send for rule "${matchedRule.triggerPhrase}" because an accepted execution is already in progress.`
-              : `Skipped duplicate send for rule "${matchedRule.triggerPhrase}".`,
+              ? `Skipped duplicate send for rule "${activeMatchedRule.triggerPhrase}" because an accepted execution is already in progress.`
+              : `Skipped duplicate send for rule "${activeMatchedRule.triggerPhrase}".`,
           });
         } else {
-          const previousMatchTime = matchedRule.lastMatchedAt
-            ? new Date(matchedRule.lastMatchedAt).getTime()
+          const previousMatchTime = activeMatchedRule.lastMatchedAt
+            ? new Date(activeMatchedRule.lastMatchedAt).getTime()
             : null;
-          const cooldownMs = matchedRule.cooldownSeconds * 1000;
+          const cooldownMs = activeMatchedRule.cooldownSeconds * 1000;
           const cooldownReady =
             previousMatchTime === null ||
             cooldownMs === 0 ||
@@ -4394,41 +4671,43 @@ export async function processTranscriptWebhook(input: {
               executionId: triggerExecutionId,
               acceptedAt: receivedAt.getTime(),
             });
-            matchedRule.lastMatchedAt = acceptedAtIso;
+            activeMatchedRule.lastMatchedAt = acceptedAtIso;
 
             try {
               // Local MVP waits inline before sending and logging. In production,
               // delayed sends should move to a background job or queue.
-              await delay(matchedRule.responseDelaySeconds * 1000);
+              await delay(activeMatchedRule.responseDelaySeconds * 1000);
 
               const createdAt = new Date().toISOString();
-              matchedRule.lastTriggeredAt = createdAt;
-              matchedRule.triggerCount += 1;
+              activeMatchedRule.lastTriggeredAt = createdAt;
+              activeMatchedRule.triggerCount += 1;
+              const sendChatStartedAt = Date.now();
 
               const executionResult = await executeSenderTargets({
                 triggerExecutionId,
                 senderTargets: senderTargetBuildResult.senderTargets,
-                replyMessage: matchedRule.replyMessage,
+                replyMessage: activeMatchedRule.replyMessage,
                 sendChatEnabled,
               });
+              const sendChatCompletedAt = Date.now();
               const firstFailure = executionResult.senderResults.find(
                 (senderResult) => senderResult.status === "failed",
               );
               const status = deriveMatchStatus(executionResult.senderResults);
               const autoDisabledAfterTrigger =
-                hasReachedMaxTriggerCount(matchedRule) && matchedRule.enabled;
+                hasReachedMaxTriggerCount(activeMatchedRule) && activeMatchedRule.enabled;
 
               if (autoDisabledAfterTrigger) {
-                matchedRule.enabled = false;
+                activeMatchedRule.enabled = false;
               }
 
               if (
-                matchedRule.senderMode === "round_robin_bots" &&
+                activeMatchedRule.senderMode === "round_robin_bots" &&
                 senderTargetBuildResult.chosenRoundRobinBotId
               ) {
-                matchedRule.nextSenderIndex =
+                activeMatchedRule.nextSenderIndex =
                   senderTargetBuildResult.nextRoundRobinIndex ??
-                  matchedRule.nextSenderIndex;
+                  activeMatchedRule.nextSenderIndex;
               }
 
               matchedLogs.push({
@@ -4438,14 +4717,14 @@ export async function processTranscriptWebhook(input: {
                 triggerExecutionId,
                 sourceEvent: input.sourceEvent,
                 sourceWebhookBotId: input.botId,
-                ruleId: matchedRule.id,
-                triggerPhrase: matchedRule.triggerPhrase,
-                replyMessage: matchedRule.replyMessage,
+                ruleId: activeMatchedRule.id,
+                triggerPhrase: activeMatchedRule.triggerPhrase,
+                replyMessage: activeMatchedRule.replyMessage,
                 transcriptText,
                 normalizedTranscriptText,
                 createdAt,
                 status,
-                senderMode: matchedRule.senderMode,
+                senderMode: activeMatchedRule.senderMode,
                 senderBotIdsUsed,
                 originalSenderBotIds: senderTargetBuildResult.originalSenderBotIds,
                 dedupedSenderBotIds: senderTargetBuildResult.dedupedSenderBotIds,
@@ -4455,17 +4734,43 @@ export async function processTranscriptWebhook(input: {
                 previousRoundRobinIndex:
                   senderTargetBuildResult.previousRoundRobinIndex,
                 nextRoundRobinIndex:
-                  matchedRule.senderMode === "round_robin_bots"
-                    ? matchedRule.nextSenderIndex
+                  activeMatchedRule.senderMode === "round_robin_bots"
+                    ? activeMatchedRule.nextSenderIndex
                     : senderTargetBuildResult.nextRoundRobinIndex,
-                responseDelaySeconds: matchedRule.responseDelaySeconds,
-                triggerCountAfter: matchedRule.triggerCount,
-                maxTriggerCount: matchedRule.maxTriggerCount,
+                responseDelaySeconds: activeMatchedRule.responseDelaySeconds,
+                triggerCountAfter: activeMatchedRule.triggerCount,
+                maxTriggerCount: activeMatchedRule.maxTriggerCount,
                 autoDisabledAfterTrigger,
                 sendAttemptCount: executionResult.sendAttemptCount,
                 actualSendCount: executionResult.actualSendCount,
                 warningMessages: senderTargetBuildResult.warningMessages,
                 senderResults: executionResult.senderResults,
+                latencyDiagnostics: {
+                  webhookReceivedAt:
+                    input.webhookReceivedAt ?? receivedAt.toISOString(),
+                  transcriptExtractedAt:
+                    input.transcriptExtractedAt ?? receivedAt.toISOString(),
+                  triggerMatchStartedAt:
+                    new Date(triggerMatchStartedAt).toISOString(),
+                  triggerMatchedAt: triggerMatchedAt
+                    ? new Date(triggerMatchedAt).toISOString()
+                    : null,
+                  sendChatStartedAt:
+                    new Date(sendChatStartedAt).toISOString(),
+                  sendChatCompletedAt:
+                    new Date(sendChatCompletedAt).toISOString(),
+                  logSavedAt: null,
+                  totalProcessingMs: null,
+                  triggerMatchMs: differenceMs(
+                    triggerMatchStartedAt,
+                    triggerMatchedAt ?? triggerMatchStartedAt,
+                  ),
+                  sendChatMs: differenceMs(
+                    sendChatStartedAt,
+                    sendChatCompletedAt,
+                  ),
+                  storageWriteMs: null,
+                },
                 errorMessage: firstFailure?.errorMessage ?? null,
                 action: executionResult.senderResults
                   .map((senderResult) => senderResult.action)
@@ -4497,6 +4802,35 @@ export async function processTranscriptWebhook(input: {
     }
 
     if (matchedLogs.length > 0) {
+      const logSaveStartedAt = Date.now();
+      for (const matchedLog of matchedLogs) {
+        if (!matchedLog.latencyDiagnostics) {
+          continue;
+        }
+
+        matchedLog.latencyDiagnostics = {
+          webhookReceivedAt: matchedLog.latencyDiagnostics.webhookReceivedAt,
+          transcriptExtractedAt:
+            matchedLog.latencyDiagnostics.transcriptExtractedAt,
+          triggerMatchStartedAt:
+            matchedLog.latencyDiagnostics.triggerMatchStartedAt,
+          triggerMatchedAt: matchedLog.latencyDiagnostics.triggerMatchedAt,
+          sendChatStartedAt: matchedLog.latencyDiagnostics.sendChatStartedAt,
+          sendChatCompletedAt:
+            matchedLog.latencyDiagnostics.sendChatCompletedAt,
+          logSavedAt: getNowIso(),
+          totalProcessingMs: differenceMs(
+            Date.parse(
+              matchedLog.latencyDiagnostics.webhookReceivedAt ??
+                receivedAt.toISOString(),
+            ),
+            logSaveStartedAt,
+          ),
+          triggerMatchMs: matchedLog.latencyDiagnostics.triggerMatchMs,
+          sendChatMs: matchedLog.latencyDiagnostics.sendChatMs,
+          storageWriteMs: matchedLog.latencyDiagnostics.storageWriteMs,
+        };
+      }
       store.matchLogs.unshift(...matchedLogs);
     }
     if (store.matchLogs.length > 100) {
@@ -4766,10 +5100,17 @@ export async function runDueScheduledBotJoins(): Promise<{
 
       const createdBotIds: string[] = [];
       const errors: string[] = [];
+      let sessionHasActiveListener = store.recallBots.some(
+        (bot) =>
+          bot.sessionId === scheduledBotJoin.sessionId &&
+          isActiveListenerRecallBot(bot),
+      );
+      let listenerCreatedInRun = false;
 
       for (let index = 0; index < scheduledBotJoin.botNames.length; index += 1) {
         const botName = scheduledBotJoin.botNames[index];
-        const role = getBotRoleForCreationIndex(index);
+        const role: RecallBotRole =
+          sessionHasActiveListener || listenerCreatedInRun ? "sender" : "listener";
 
         try {
           const createRequestPayload = buildCreateRecallBotPayload({
@@ -4795,6 +5136,11 @@ export async function runDueScheduledBotJoins(): Promise<{
           });
 
           createdBotIds.push(recallBotRecord.recallBotId);
+
+          if (role === "listener") {
+            sessionHasActiveListener = true;
+            listenerCreatedInRun = true;
+          }
         } catch (error) {
           errors.push(
             `Bot ${index + 1} (${botName}): ${

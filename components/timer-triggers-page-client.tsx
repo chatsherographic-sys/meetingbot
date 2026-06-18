@@ -12,6 +12,7 @@ import {
 import { isBotActiveStatus } from "@/lib/bot-status";
 import {
   formatTime,
+  isDocumentVisible,
   readJsonResponse,
   type PanelMessage,
 } from "@/components/control-panel-client";
@@ -592,8 +593,12 @@ export function TimerTriggersPageClient() {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
+      if (!isDocumentVisible()) {
+        return;
+      }
+
       void performRunDueTimers();
-    }, 10000);
+    }, 5000);
 
     return () => {
       window.clearInterval(interval);

@@ -106,6 +106,10 @@ export default async function DiagnosticsPage() {
           <p>These values are read on the server for the current request.</p>
         </div>
         <div className="card-body">
+          <p className="message warning">
+            Page refresh interval only affects what you see in the UI. Trigger
+            execution happens when the webhook is received.
+          </p>
           <div className="settings-list">
             <div className="setting-item">
               <span className="setting-label">STORAGE_DRIVER</span>

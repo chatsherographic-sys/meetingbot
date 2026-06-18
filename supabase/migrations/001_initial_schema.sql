@@ -123,6 +123,7 @@ create table if not exists public.matched_trigger_logs (
   actual_send_count integer not null default 0,
   warning_messages jsonb not null default '[]'::jsonb,
   sender_results jsonb not null default '[]'::jsonb,
+  latency_diagnostics jsonb null,
   error_message text null,
   action text not null
 );
