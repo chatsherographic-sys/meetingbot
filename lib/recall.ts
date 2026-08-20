@@ -219,12 +219,6 @@ export function buildCreateRecallBotPayload(input: {
   const payload: Record<string, unknown> = {
     meeting_url: input.meetingUrl,
     bot_name: input.botName,
-    chat: {
-      on_bot_join: {
-        send_to: "everyone",
-        message: "Bot joined. Please ignore me, sorry.",
-      },
-    },
   };
 
   return payload;
