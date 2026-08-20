@@ -15,6 +15,23 @@ import type {
   RecallBotRecord,
 } from "@/lib/types";
 
+type BulkCreateResult = {
+  successfulTemplates: Array<{
+    index: number;
+    liveChatTemplate: LiveChatTemplate;
+  }>;
+  failedAttempts: Array<{
+    index: number;
+    name: string;
+    error: string;
+  }>;
+} | null;
+
+type BulkTemplateDraft = {
+  message: string;
+  botId: string;
+};
+
 type LiveChatTemplateFormState = {
   name: string;
   message: string;
@@ -28,6 +45,13 @@ const initialFormState: LiveChatTemplateFormState = {
   senderMode: "selected_bots",
   botIds: [],
 };
+
+function createBulkTemplateDrafts(count: number): BulkTemplateDraft[] {
+  return Array.from({ length: count }, () => ({
+    message: "",
+    botId: "",
+  }));
+}
 
 function formatTemplateSenderMode(
   senderMode: LiveChatTemplate["senderMode"],
@@ -48,6 +72,10 @@ export function LiveChatPageClient() {
     useMeetingSession();
   const [formState, setFormState] =
     useState<LiveChatTemplateFormState>(initialFormState);
+  const [templateCount, setTemplateCount] = useState("1");
+  const [bulkTemplateDrafts, setBulkTemplateDrafts] = useState<BulkTemplateDraft[]>(
+    createBulkTemplateDrafts(1),
+  );
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [liveChatTemplates, setLiveChatTemplates] = useState<LiveChatTemplate[]>([]);
   const [liveChatLogs, setLiveChatLogs] = useState<LiveChatLog[]>([]);
@@ -56,8 +84,10 @@ export function LiveChatPageClient() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [sendingTemplateId, setSendingTemplateId] = useState<string | null>(null);
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
+  const [deletingAllTemplates, setDeletingAllTemplates] = useState(false);
   const [message, setMessage] = useState<PanelMessage>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bulkCreateResult, setBulkCreateResult] = useState<BulkCreateResult>(null);
 
   const selectableBots = useMemo(
     () => recallBots.filter((bot) => isBotActiveStatus(bot.status)),
@@ -66,6 +96,34 @@ export function LiveChatPageClient() {
   const currentSessionBlockedMessage = getSessionOperationBlockedMessage(
     currentSession?.status,
   );
+  const parsedTemplateCount = useMemo(
+    () => Math.max(1, Math.min(100, Math.floor(Number(templateCount) || 1))),
+    [templateCount],
+  );
+  const isBulkCreateMode = !editingTemplateId && parsedTemplateCount > 1;
+  const hasInvalidBulkMessages = useMemo(
+    () =>
+      isBulkCreateMode &&
+      bulkTemplateDrafts
+        .slice(0, parsedTemplateCount)
+        .some((draft) => !draft.message.trim()),
+    [bulkTemplateDrafts, isBulkCreateMode, parsedTemplateCount],
+  );
+
+  useEffect(() => {
+    setBulkTemplateDrafts((current) => {
+      const nextDrafts = current.slice(0, parsedTemplateCount);
+
+      while (nextDrafts.length < parsedTemplateCount) {
+        nextDrafts.push({
+          message: "",
+          botId: "",
+        });
+      }
+
+      return nextDrafts;
+    });
+  }, [parsedTemplateCount]);
 
   async function loadLiveChatData() {
     const [templatesResponse, logsResponse, botsResponse] = await Promise.all([
@@ -144,7 +202,10 @@ export function LiveChatPageClient() {
 
   function resetForm() {
     setFormState(initialFormState);
+    setTemplateCount("1");
+    setBulkTemplateDrafts(createBulkTemplateDrafts(1));
     setEditingTemplateId(null);
+    setBulkCreateResult(null);
   }
 
   function toggleSelectedBot(botId: string) {
@@ -158,6 +219,8 @@ export function LiveChatPageClient() {
 
   function startEditingTemplate(template: LiveChatTemplate) {
     setEditingTemplateId(template.id);
+    setTemplateCount("1");
+    setBulkCreateResult(null);
     setFormState({
       name: template.name,
       message: template.message,
@@ -170,6 +233,7 @@ export function LiveChatPageClient() {
   async function handleSaveTemplate() {
     setSavingTemplate(true);
     setMessage(null);
+    setBulkCreateResult(null);
 
     try {
       const endpoint = editingTemplateId
@@ -184,25 +248,63 @@ export function LiveChatPageClient() {
         body: JSON.stringify({
           sessionId: currentSessionId,
           name: formState.name,
-          message: formState.message,
-          senderMode: formState.senderMode,
-          botIds: formState.senderMode === "all_bots" ? [] : formState.botIds,
+          message: isBulkCreateMode ? "" : formState.message,
+          senderMode: isBulkCreateMode ? "selected_bots" : formState.senderMode,
+          botIds:
+            isBulkCreateMode || formState.senderMode === "all_bots"
+              ? []
+              : formState.botIds,
+          templateCount: editingTemplateId ? 1 : parsedTemplateCount,
+          bulkTemplates: isBulkCreateMode
+            ? bulkTemplateDrafts.slice(0, parsedTemplateCount).map((draft) => ({
+                message: draft.message,
+                botId: draft.botId,
+              }))
+            : undefined,
         }),
       });
       const payload = await readJsonResponse<{
         error?: string;
+        liveChatTemplate?: LiveChatTemplate;
+        successfulTemplates?: Array<{
+          index: number;
+          liveChatTemplate: LiveChatTemplate;
+        }>;
+        failedAttempts?: Array<{
+          index: number;
+          name: string;
+          error: string;
+        }>;
       }>(response);
 
-      if (!response.ok) {
+      if (!response.ok && !payload.successfulTemplates?.length) {
         throw new Error(payload.error ?? "Failed to save live chat template.");
       }
 
-      setMessage({
-        type: "success",
-        text: editingTemplateId
-          ? "Live chat template updated."
-          : "Live chat template created.",
-      });
+      if (payload.liveChatTemplate) {
+        setMessage({
+          type: "success",
+          text: editingTemplateId
+            ? "Live chat template updated."
+            : "Live chat template created.",
+        });
+      } else {
+        const successfulTemplates = payload.successfulTemplates ?? [];
+        const failedAttempts = payload.failedAttempts ?? [];
+
+        setBulkCreateResult({
+          successfulTemplates,
+          failedAttempts,
+        });
+        setMessage({
+          type: failedAttempts.length > 0 ? "error" : "success",
+          text:
+            failedAttempts.length > 0
+              ? `${successfulTemplates.length} live chat template(s) created, ${failedAttempts.length} failed.`
+              : `${successfulTemplates.length} live chat template(s) created.`,
+        });
+      }
+
       resetForm();
       await loadLiveChatData();
     } catch (saveError) {
@@ -331,6 +433,50 @@ export function LiveChatPageClient() {
     }
   }
 
+  async function handleDeleteAllTemplates() {
+    const confirmed = window.confirm(
+      "This will delete all live chat templates for the current session only. This cannot be undone.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingAllTemplates(true);
+    setMessage(null);
+
+    try {
+      const response = await fetch(
+        `/api/live-chat/templates?sessionId=${encodeURIComponent(currentSessionId)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const payload = await readJsonResponse<{ error?: string }>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to delete live chat templates.");
+      }
+
+      resetForm();
+      setMessage({
+        type: "success",
+        text: "All live chat templates for the current session were deleted.",
+      });
+      await loadLiveChatData();
+    } catch (deleteError) {
+      setMessage({
+        type: "error",
+        text:
+          deleteError instanceof Error
+            ? deleteError.message
+            : "Failed to delete live chat templates.",
+      });
+    } finally {
+      setDeletingAllTemplates(false);
+    }
+  }
+
   async function handleClearLiveChatLogs() {
     setMessage(null);
 
@@ -417,7 +563,34 @@ export function LiveChatPageClient() {
           <div className="card-body">
             <div className="form">
               <div className="field">
-                <label htmlFor="live-chat-template-name">Template name</label>
+                <label htmlFor="live-chat-template-count">
+                  Number of Live Chat Templates
+                </label>
+                <input
+                  id="live-chat-template-count"
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  disabled={Boolean(editingTemplateId)}
+                  value={templateCount}
+                  onChange={(event) => setTemplateCount(event.target.value)}
+                  required
+                />
+                {!editingTemplateId && parsedTemplateCount > 1 ? (
+                  <p className="muted">
+                    Bulk create uses the template name as a prefix and generates
+                    separate templates with sequential names.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="field">
+                <label htmlFor="live-chat-template-name">
+                  {editingTemplateId || parsedTemplateCount <= 1
+                    ? "Template name"
+                    : "Template name prefix"}
+                </label>
                 <input
                   id="live-chat-template-name"
                   value={formState.name}
@@ -429,117 +602,216 @@ export function LiveChatPageClient() {
                   }
                   placeholder="e.g. New Student Follow-up"
                 />
+                {!editingTemplateId && parsedTemplateCount > 1 ? (
+                  <p className="muted">
+                    Example: <span className="code">{formState.name.trim() || "Live Chat Template"}</span>{" "}
+                    becomes{" "}
+                    <span className="code">
+                      {(formState.name.trim() || "Live Chat Template") + " 1"}
+                    </span>
+                    ,{" "}
+                    <span className="code">
+                      {(formState.name.trim() || "Live Chat Template") + " 2"}
+                    </span>
+                    , and so on.
+                  </p>
+                ) : null}
               </div>
 
-              <div className="field">
-                <label htmlFor="live-chat-template-message">Message</label>
-                <textarea
-                  id="live-chat-template-message"
-                  value={formState.message}
-                  onChange={(event) =>
-                    setFormState((current) => ({
-                      ...current,
-                      message: event.target.value,
-                    }))
-                  }
-                  placeholder="Type the Zoom chat message template..."
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="live-chat-template-sender-mode">Sender mode</label>
-                <select
-                  id="live-chat-template-sender-mode"
-                  value={formState.senderMode}
-                  onChange={(event) =>
-                    setFormState((current) => ({
-                      ...current,
-                      senderMode:
-                        event.target.value === "all_bots"
-                          ? "all_bots"
-                          : event.target.value === "round_robin"
-                            ? "round_robin"
-                            : "selected_bots",
-                    }))
-                  }
-                >
-                  <option value="selected_bots">Selected Bots</option>
-                  <option value="round_robin">Round Robin</option>
-                  <option value="all_bots">All Active Bots</option>
-                </select>
-                {formState.senderMode === "all_bots" ? (
+              {isBulkCreateMode ? (
+                <div className="field">
+                  <label>Template Rows</label>
                   <p className="muted">
-                    This template will send once through every active bot in the
-                    current session.
+                    Each row creates one independent live chat template. The bot
+                    selection uses the existing selected-bots assignment logic.
                   </p>
-                ) : formState.senderMode === "round_robin" ? (
-                  <p className="muted">
-                    This template sends through only one bot per click and rotates
-                    each time. If no bots are selected here, it uses all active bots
-                    in the current session.
-                  </p>
-                ) : (
-                  <p className="muted">
-                    This template will send only through the selected active or
-                    created bots in the current session.
-                  </p>
-                )}
-              </div>
-
-              <div className="field">
-                <label>Selected bots</label>
-                {selectableBots.length === 0 ? (
-                  <div className="empty">No active or created bots right now.</div>
-                ) : (
-                  <div className="choice-list">
-                    {selectableBots.map((bot) => (
-                      <label className="choice-item" key={bot.id}>
-                        <input
-                          type="checkbox"
-                          disabled={formState.senderMode === "all_bots"}
-                          checked={formState.botIds.includes(bot.recallBotId)}
-                          onChange={() => toggleSelectedBot(bot.recallBotId)}
-                        />
-                        <span>
-                          {bot.botName} ({bot.recallBotId})
-                        </span>
-                        <span className="muted">Status: {bot.status}</span>
-                      </label>
-                    ))}
+                  <div className="rule-list compact-list">
+                    {bulkTemplateDrafts
+                      .slice(0, parsedTemplateCount)
+                      .map((draft, index) => (
+                        <article className="rule-item" key={`bulk-template-${index + 1}`}>
+                          <h3>
+                            {(formState.name.trim() || "Live Chat Template") +
+                              ` ${index + 1}`}
+                          </h3>
+                          <div className="field">
+                            <label htmlFor={`bulk-template-message-${index + 1}`}>
+                              Message
+                            </label>
+                            <textarea
+                              id={`bulk-template-message-${index + 1}`}
+                              value={draft.message}
+                              onChange={(event) =>
+                                setBulkTemplateDrafts((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? {
+                                          ...item,
+                                          message: event.target.value,
+                                        }
+                                      : item,
+                                  ),
+                                )
+                              }
+                              placeholder={`Type message for template ${index + 1}...`}
+                            />
+                          </div>
+                          <div className="field">
+                            <label htmlFor={`bulk-template-bot-${index + 1}`}>
+                              Select Bot
+                            </label>
+                            <select
+                              id={`bulk-template-bot-${index + 1}`}
+                              value={draft.botId}
+                              onChange={(event) =>
+                                setBulkTemplateDrafts((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? {
+                                          ...item,
+                                          botId: event.target.value,
+                                        }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            >
+                              <option value="">No bot assigned yet</option>
+                              {selectableBots.map((bot) => (
+                                <option key={bot.id} value={bot.recallBotId}>
+                                  {bot.botName} ({bot.recallBotId})
+                                </option>
+                              ))}
+                            </select>
+                            {draft.botId ? (
+                              <p className="code">
+                                Selected bot: {getBotDisplayName(draft.botId)}
+                              </p>
+                            ) : (
+                              <p className="message warning">
+                                No bot selected yet. This template can still be
+                                created, but sending will fail until a bot is
+                                assigned.
+                              </p>
+                            )}
+                          </div>
+                        </article>
+                      ))}
                   </div>
-                )}
-                {formState.senderMode === "selected_bots" ? (
-                  selectedBotsSummary.length > 0 ? (
-                    <p className="code">
-                      Selected bots:{" "}
-                      {selectedBotsSummary
-                        .map((bot) => `${bot.botName} (${bot.recallBotId})`)
-                        .join(", ")}
-                    </p>
-                  ) : (
-                    <p className="message warning">
-                      No bots selected yet. You can still save the template, but
-                      sending will fail until bots are assigned.
-                    </p>
-                  )
-                ) : formState.senderMode === "round_robin" ? (
-                  selectedBotsSummary.length > 0 ? (
-                    <p className="code">
-                      Round robin pool:{" "}
-                      {selectedBotsSummary
-                        .map((bot) => `${bot.botName} (${bot.recallBotId})`)
-                        .join(", ")}
-                    </p>
-                  ) : (
-                    <p className="code">
-                      No bots selected. Round robin will use all active bots in the
-                      current session.
-                    </p>
-                  )
-                ) : (
-                  <p className="code">Bot selection is ignored in all_bots mode.</p>
-                )}
-              </div>
+                </div>
+              ) : (
+                <>
+                  <div className="field">
+                    <label htmlFor="live-chat-template-message">Message</label>
+                    <textarea
+                      id="live-chat-template-message"
+                      value={formState.message}
+                      onChange={(event) =>
+                        setFormState((current) => ({
+                          ...current,
+                          message: event.target.value,
+                        }))
+                      }
+                      placeholder="Type the Zoom chat message template..."
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="live-chat-template-sender-mode">Sender mode</label>
+                    <select
+                      id="live-chat-template-sender-mode"
+                      value={formState.senderMode}
+                      onChange={(event) =>
+                        setFormState((current) => ({
+                          ...current,
+                          senderMode:
+                            event.target.value === "all_bots"
+                              ? "all_bots"
+                              : event.target.value === "round_robin"
+                                ? "round_robin"
+                                : "selected_bots",
+                        }))
+                      }
+                    >
+                      <option value="selected_bots">Selected Bots</option>
+                      <option value="round_robin">Round Robin</option>
+                      <option value="all_bots">All Active Bots</option>
+                    </select>
+                    {formState.senderMode === "all_bots" ? (
+                      <p className="muted">
+                        This template will send once through every active bot in the
+                        current session.
+                      </p>
+                    ) : formState.senderMode === "round_robin" ? (
+                      <p className="muted">
+                        This template sends through only one bot per click and rotates
+                        each time. If no bots are selected here, it uses all active
+                        bots in the current session.
+                      </p>
+                    ) : (
+                      <p className="muted">
+                        This template will send only through the selected active or
+                        created bots in the current session.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="field">
+                    <label>Selected bots</label>
+                    {selectableBots.length === 0 ? (
+                      <div className="empty">No active or created bots right now.</div>
+                    ) : (
+                      <div className="choice-list">
+                        {selectableBots.map((bot) => (
+                          <label className="choice-item" key={bot.id}>
+                            <input
+                              type="checkbox"
+                              disabled={formState.senderMode === "all_bots"}
+                              checked={formState.botIds.includes(bot.recallBotId)}
+                              onChange={() => toggleSelectedBot(bot.recallBotId)}
+                            />
+                            <span>
+                              {bot.botName} ({bot.recallBotId})
+                            </span>
+                            <span className="muted">Status: {bot.status}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {formState.senderMode === "selected_bots" ? (
+                      selectedBotsSummary.length > 0 ? (
+                        <p className="code">
+                          Selected bots:{" "}
+                          {selectedBotsSummary
+                            .map((bot) => `${bot.botName} (${bot.recallBotId})`)
+                            .join(", ")}
+                        </p>
+                      ) : (
+                        <p className="message warning">
+                          No bots selected yet. You can still save the template, but
+                          sending will fail until bots are assigned.
+                        </p>
+                      )
+                    ) : formState.senderMode === "round_robin" ? (
+                      selectedBotsSummary.length > 0 ? (
+                        <p className="code">
+                          Round robin pool:{" "}
+                          {selectedBotsSummary
+                            .map((bot) => `${bot.botName} (${bot.recallBotId})`)
+                            .join(", ")}
+                        </p>
+                      ) : (
+                        <p className="code">
+                          No bots selected. Round robin will use all active bots in the
+                          current session.
+                        </p>
+                      )
+                    ) : (
+                      <p className="code">Bot selection is ignored in all_bots mode.</p>
+                    )}
+                  </div>
+                </>
+              )}
 
               <div className="actions">
                 <button
@@ -549,7 +821,9 @@ export function LiveChatPageClient() {
                     savingTemplate ||
                     Boolean(currentSessionBlockedMessage) ||
                     !formState.name.trim() ||
-                    !formState.message.trim()
+                    (!isBulkCreateMode && !formState.message.trim()) ||
+                    hasInvalidBulkMessages ||
+                    parsedTemplateCount < 1
                   }
                   onClick={() => void handleSaveTemplate()}
                 >
@@ -559,7 +833,9 @@ export function LiveChatPageClient() {
                       : "Creating..."
                     : editingTemplateId
                       ? "Save Template"
-                      : "Create Template"}
+                      : parsedTemplateCount > 1
+                        ? "Create All"
+                        : "Create Template"}
                 </button>
                 {editingTemplateId ? (
                   <button
@@ -573,6 +849,58 @@ export function LiveChatPageClient() {
                 ) : null}
               </div>
             </div>
+
+            {bulkCreateResult ? (
+              <div className="result-stack">
+                <div className="result-block">
+                  <h4>Successful creations</h4>
+                  {bulkCreateResult.successfulTemplates.length === 0 ? (
+                    <p className="muted">No templates were created.</p>
+                  ) : (
+                    <div className="log-list compact-list">
+                      {bulkCreateResult.successfulTemplates.map((result) => (
+                        <article
+                          className="log-item"
+                          key={result.liveChatTemplate.id}
+                        >
+                          <h3>{result.liveChatTemplate.name}</h3>
+                          <div className="log-meta">
+                            <span className="pill">Attempt: {result.index}</span>
+                            <span className="pill">
+                              Sender mode:{" "}
+                              {formatTemplateSenderMode(
+                                result.liveChatTemplate.senderMode,
+                              )}
+                            </span>
+                          </div>
+                          <p className="code">{result.liveChatTemplate.message}</p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {bulkCreateResult.failedAttempts.length > 0 ? (
+                  <div className="result-block">
+                    <h4>Failed creations</h4>
+                    <div className="log-list compact-list">
+                      {bulkCreateResult.failedAttempts.map((failure) => (
+                        <article
+                          className="log-item"
+                          key={`${failure.index}-${failure.name}`}
+                        >
+                          <h3>{failure.name}</h3>
+                          <div className="log-meta">
+                            <span className="pill">Attempt: {failure.index}</span>
+                          </div>
+                          <p className="code error-text">{failure.error}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -630,13 +958,25 @@ export function LiveChatPageClient() {
                 <h3>Live Chat Templates</h3>
                 <p>Send saved Zoom chat messages without retyping them each time.</p>
               </div>
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => void loadLiveChatData()}
-              >
-                Refresh data
-              </button>
+              <div className="actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => void loadLiveChatData()}
+                >
+                  Refresh data
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={deletingAllTemplates || liveChatTemplates.length === 0}
+                  onClick={() => void handleDeleteAllTemplates()}
+                >
+                  {deletingAllTemplates
+                    ? "Deleting..."
+                    : "Delete All Live Chat Templates"}
+                </button>
+              </div>
             </div>
           </div>
           <div className="card-body">

@@ -3235,6 +3235,14 @@ export async function deleteLiveChatTemplate(id: string): Promise<void> {
   });
 }
 
+export async function clearLiveChatTemplates(sessionId?: string): Promise<void> {
+  await mutateStore(async (store) => {
+    store.liveChatTemplates = store.liveChatTemplates.filter(
+      (template) => !matchesSessionId(template.sessionId, sessionId),
+    );
+  });
+}
+
 export async function listLiveChatLogs(
   options?: LiveChatLogListOptions,
 ): Promise<PaginatedResult<LiveChatLog>> {
