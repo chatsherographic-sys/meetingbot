@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseStorageConfigError } from "@/lib/storage/config";
 import type { MatchLog, MatchSenderResult, StoreData } from "@/lib/types";
@@ -118,6 +119,7 @@ function mapStoreToRows(store: StoreData) {
       scheduled_at: schedule.scheduledAt,
       bot_count: schedule.botCount,
       bot_names: schedule.botNames,
+      bot_slots: schedule.botSlots,
       transcript_language: schedule.transcriptLanguage,
       status: schedule.status,
       created_bot_ids: schedule.createdBotIds,
@@ -231,6 +233,7 @@ function mapStoreToRows(store: StoreData) {
       message: template.message,
       sender_mode: template.senderMode,
       bot_ids: template.botIds,
+      bot_targets: template.botTargets,
       round_robin_index: template.roundRobinIndex,
       last_sent_bot_id: template.lastSentBotId,
       last_sent_at: template.lastSentAt,
@@ -409,6 +412,41 @@ export function createSupabaseStoreAdapter(
           scheduledAt: String(schedule.scheduled_at ?? new Date().toISOString()),
           botCount: Number(schedule.bot_count ?? 1),
           botNames: normalizeJsonArray(schedule.bot_names),
+          botSlots:
+            Array.isArray(schedule.bot_slots) && schedule.bot_slots.length > 0
+              ? schedule.bot_slots.map((slot: unknown, index: number) => ({
+                id:
+                  typeof (slot as { id?: unknown }).id === "string" &&
+                  (slot as { id: string }).id.trim()
+                    ? (slot as { id: string }).id.trim()
+                    : randomUUID(),
+                slotNumber:
+                  Number((slot as { slotNumber?: unknown }).slotNumber) > 0
+                    ? Number((slot as { slotNumber: number }).slotNumber)
+                    : index + 1,
+                botName:
+                  typeof (slot as { botName?: unknown }).botName === "string"
+                    ? (slot as { botName: string }).botName.trim() ||
+                      normalizeJsonArray(schedule.bot_names)[index] ||
+                      `Bot ${index + 1}`
+                    : normalizeJsonArray(schedule.bot_names)[index] ||
+                      `Bot ${index + 1}`,
+                createdRecallBotId:
+                  typeof (slot as { createdRecallBotId?: unknown }).createdRecallBotId ===
+                  "string"
+                    ? (slot as { createdRecallBotId: string }).createdRecallBotId.trim() ||
+                      null
+                    : null,
+                }))
+              : normalizeJsonArray(schedule.bot_names).map((botName, index) => ({
+                  id: randomUUID(),
+                  slotNumber: index + 1,
+                  botName,
+                  createdRecallBotId:
+                    typeof normalizeJsonArray(schedule.created_bot_ids)[index] === "string"
+                      ? normalizeJsonArray(schedule.created_bot_ids)[index]
+                      : null,
+                })),
           transcriptLanguage: String(schedule.transcript_language ?? "zh-CN"),
           status: String(schedule.status ?? "pending"),
           createdBotIds: normalizeJsonArray(schedule.created_bot_ids),
@@ -448,9 +486,53 @@ export function createSupabaseStoreAdapter(
             template.sender_mode === "all_bots"
               ? "all_bots"
               : template.sender_mode === "round_robin"
-                ? "round_robin"
+              ? "round_robin"
                 : "selected_bots",
           botIds: normalizeJsonArray(template.bot_ids),
+          botTargets: Array.isArray(template.bot_targets)
+            ? template.bot_targets
+                .map((target: unknown) => {
+                  if (
+                    target &&
+                    typeof target === "object" &&
+                    (target as { type?: unknown }).type === "scheduled_bot_slot" &&
+                    typeof (target as { scheduledBotJoinId?: unknown }).scheduledBotJoinId ===
+                      "string" &&
+                    typeof (target as { scheduledBotSlotId?: unknown }).scheduledBotSlotId ===
+                      "string"
+                  ) {
+                    return {
+                      type: "scheduled_bot_slot" as const,
+                      scheduledBotJoinId: String(
+                        (target as { scheduledBotJoinId: string }).scheduledBotJoinId,
+                      ).trim(),
+                      scheduledBotSlotId: String(
+                        (target as { scheduledBotSlotId: string }).scheduledBotSlotId,
+                      ).trim(),
+                    };
+                  }
+
+                  if (
+                    target &&
+                    typeof target === "object" &&
+                    (target as { type?: unknown }).type === "recall_bot" &&
+                    typeof (target as { recallBotId?: unknown }).recallBotId === "string"
+                  ) {
+                    return {
+                      type: "recall_bot" as const,
+                      recallBotId: String(
+                        (target as { recallBotId: string }).recallBotId,
+                      ).trim(),
+                    };
+                  }
+
+                  return null;
+                })
+                .filter(Boolean)
+            : normalizeJsonArray(template.bot_ids).map((recallBotId) => ({
+                type: "recall_bot" as const,
+                recallBotId,
+              })),
           roundRobinIndex: Number(template.round_robin_index ?? 0),
           lastSentBotId:
             typeof template.last_sent_bot_id === "string"

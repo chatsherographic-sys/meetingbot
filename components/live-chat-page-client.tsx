@@ -12,7 +12,9 @@ import { getSessionOperationBlockedMessage } from "@/lib/session-operations";
 import type {
   LiveChatLog,
   LiveChatTemplate,
+  LiveChatTemplateTarget,
   RecallBotRecord,
+  ScheduledBotJoin,
 } from "@/lib/types";
 
 type BulkCreateResult = {
@@ -29,28 +31,41 @@ type BulkCreateResult = {
 
 type BulkTemplateDraft = {
   message: string;
-  botId: string;
+  targetKey: string;
+};
+
+type LiveChatTargetOption = {
+  key: string;
+  label: string;
+  description: string;
+  target: LiveChatTemplateTarget;
 };
 
 type LiveChatTemplateFormState = {
   name: string;
   message: string;
   senderMode: LiveChatTemplate["senderMode"];
-  botIds: string[];
+  botTargets: LiveChatTemplateTarget[];
 };
 
 const initialFormState: LiveChatTemplateFormState = {
   name: "",
   message: "",
   senderMode: "selected_bots",
-  botIds: [],
+  botTargets: [],
 };
 
 function createBulkTemplateDrafts(count: number): BulkTemplateDraft[] {
   return Array.from({ length: count }, () => ({
     message: "",
-    botId: "",
+    targetKey: "",
   }));
+}
+
+function getLiveChatTargetKey(target: LiveChatTemplateTarget): string {
+  return target.type === "scheduled_bot_slot"
+    ? `scheduled:${target.scheduledBotJoinId}:${target.scheduledBotSlotId}`
+    : `bot:${target.recallBotId}`;
 }
 
 function formatTemplateSenderMode(
@@ -80,6 +95,7 @@ export function LiveChatPageClient() {
   const [liveChatTemplates, setLiveChatTemplates] = useState<LiveChatTemplate[]>([]);
   const [liveChatLogs, setLiveChatLogs] = useState<LiveChatLog[]>([]);
   const [recallBots, setRecallBots] = useState<RecallBotRecord[]>([]);
+  const [scheduledBotJoins, setScheduledBotJoins] = useState<ScheduledBotJoin[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [sendingTemplateId, setSendingTemplateId] = useState<string | null>(null);
@@ -92,6 +108,79 @@ export function LiveChatPageClient() {
   const selectableBots = useMemo(
     () => recallBots.filter((bot) => isBotActiveStatus(bot.status)),
     [recallBots],
+  );
+  function findScheduledSlotTarget(
+    target: Extract<LiveChatTemplateTarget, { type: "scheduled_bot_slot" }>,
+  ): {
+    schedule: ScheduledBotJoin;
+    slot: ScheduledBotJoin["botSlots"][number];
+  } | null {
+    const schedule = scheduledBotJoins.find(
+      (scheduledBotJoin) => scheduledBotJoin.id === target.scheduledBotJoinId,
+    );
+    const slot = schedule?.botSlots.find(
+      (scheduledBotSlot) => scheduledBotSlot.id === target.scheduledBotSlotId,
+    );
+
+    if (!schedule || !slot) {
+      return null;
+    }
+
+    return {
+      schedule,
+      slot,
+    };
+  }
+
+  function getResolvedLiveChatTargetKey(target: LiveChatTemplateTarget): string {
+    if (target.type !== "scheduled_bot_slot") {
+      return getLiveChatTargetKey(target);
+    }
+
+    const resolvedSlotTarget = findScheduledSlotTarget(target);
+
+    if (resolvedSlotTarget?.slot.createdRecallBotId) {
+      return `bot:${resolvedSlotTarget.slot.createdRecallBotId}`;
+    }
+
+    return getLiveChatTargetKey(target);
+  }
+
+  const liveChatTargetOptions = useMemo<LiveChatTargetOption[]>(() => {
+    const actualBotOptions = selectableBots.map((bot) => ({
+      key: `bot:${bot.recallBotId}`,
+      label: `${bot.botName} (${bot.recallBotId})`,
+      description: `Existing bot. Status: ${bot.status}`,
+      target: {
+        type: "recall_bot" as const,
+        recallBotId: bot.recallBotId,
+      },
+    }));
+    const scheduledSlotOptions = scheduledBotJoins
+      .filter((schedule) => schedule.status !== "cancelled")
+      .flatMap((schedule) =>
+        schedule.botSlots
+          .filter((slot) => !slot.createdRecallBotId)
+          .map((slot) => ({
+            key: `scheduled:${schedule.id}:${slot.id}`,
+            label: `${schedule.name} - Scheduled Bot Slot ${slot.slotNumber} (${slot.botName})`,
+            description: "Future scheduled bot slot",
+            target: {
+              type: "scheduled_bot_slot" as const,
+              scheduledBotJoinId: schedule.id,
+              scheduledBotSlotId: slot.id,
+            },
+          })),
+      );
+
+    return [...actualBotOptions, ...scheduledSlotOptions];
+  }, [scheduledBotJoins, selectableBots]);
+  const liveChatTargetOptionsByKey = useMemo(
+    () =>
+      new Map(
+        liveChatTargetOptions.map((option) => [option.key, option] as const),
+      ),
+    [liveChatTargetOptions],
   );
   const currentSessionBlockedMessage = getSessionOperationBlockedMessage(
     currentSession?.status,
@@ -117,7 +206,7 @@ export function LiveChatPageClient() {
       while (nextDrafts.length < parsedTemplateCount) {
         nextDrafts.push({
           message: "",
-          botId: "",
+          targetKey: "",
         });
       }
 
@@ -126,7 +215,8 @@ export function LiveChatPageClient() {
   }, [parsedTemplateCount]);
 
   async function loadLiveChatData() {
-    const [templatesResponse, logsResponse, botsResponse] = await Promise.all([
+    const [templatesResponse, logsResponse, botsResponse, schedulesResponse] =
+      await Promise.all([
       fetch(
         `/api/live-chat/templates?sessionId=${encodeURIComponent(currentSessionId)}&pageSize=200`,
         { cache: "no-store" },
@@ -139,9 +229,18 @@ export function LiveChatPageClient() {
         `/api/recall/bots?sessionId=${encodeURIComponent(currentSessionId)}&pageSize=200`,
         { cache: "no-store" },
       ),
+      fetch(
+        `/api/scheduled-bots?sessionId=${encodeURIComponent(currentSessionId)}&pageSize=200`,
+        { cache: "no-store" },
+      ),
     ]);
 
-    if (!templatesResponse.ok || !logsResponse.ok || !botsResponse.ok) {
+    if (
+      !templatesResponse.ok ||
+      !logsResponse.ok ||
+      !botsResponse.ok ||
+      !schedulesResponse.ok
+    ) {
       throw new Error("Failed to load live chat data.");
     }
 
@@ -154,10 +253,14 @@ export function LiveChatPageClient() {
     const botsPayload = await readJsonResponse<{
       recallBots: RecallBotRecord[];
     }>(botsResponse);
+    const schedulesPayload = await readJsonResponse<{
+      scheduledBotJoins: ScheduledBotJoin[];
+    }>(schedulesResponse);
 
     setLiveChatTemplates(templatesPayload.liveChatTemplates);
     setLiveChatLogs(logsPayload.liveChatLogs);
     setRecallBots(botsPayload.recallBots);
+    setScheduledBotJoins(schedulesPayload.scheduledBotJoins);
     setError(null);
   }
 
@@ -192,12 +295,50 @@ export function LiveChatPageClient() {
   }, [currentSessionId]);
 
   const selectedBotsSummary = useMemo(() => {
-    return selectableBots.filter((bot) => formState.botIds.includes(bot.recallBotId));
-  }, [selectableBots, formState.botIds]);
+    return formState.botTargets
+      .map(
+        (target) =>
+          liveChatTargetOptionsByKey.get(getResolvedLiveChatTargetKey(target)) ?? null,
+      )
+      .filter((option): option is LiveChatTargetOption => Boolean(option));
+  }, [formState.botTargets, liveChatTargetOptionsByKey]);
+  const missingSelectedTargets = useMemo(
+    () =>
+      formState.botTargets.filter(
+        (target) => !liveChatTargetOptionsByKey.has(getResolvedLiveChatTargetKey(target)),
+      ),
+    [formState.botTargets, liveChatTargetOptionsByKey],
+  );
 
   function getBotDisplayName(botId: string): string {
     const bot = recallBots.find((item) => item.recallBotId === botId);
     return bot ? `${bot.botName} (${bot.recallBotId})` : `${botId} (missing)`;
+  }
+
+  function getTargetDisplayName(target: LiveChatTemplateTarget): string {
+    const option = liveChatTargetOptionsByKey.get(getResolvedLiveChatTargetKey(target));
+
+    if (option) {
+      return option.label;
+    }
+
+    if (target.type === "scheduled_bot_slot") {
+      const resolvedSlotTarget = findScheduledSlotTarget(target);
+      const schedule = resolvedSlotTarget?.schedule;
+      const slot = resolvedSlotTarget?.slot;
+
+      if (slot?.createdRecallBotId) {
+        return getBotDisplayName(slot.createdRecallBotId);
+      }
+
+      if (schedule && slot) {
+        return `${schedule.name} - Scheduled Bot Slot ${slot.slotNumber} (${slot.botName})`;
+      }
+
+      return `Scheduled bot slot (${target.scheduledBotJoinId})`;
+    }
+
+    return getBotDisplayName(target.recallBotId);
   }
 
   function resetForm() {
@@ -208,12 +349,19 @@ export function LiveChatPageClient() {
     setBulkCreateResult(null);
   }
 
-  function toggleSelectedBot(botId: string) {
+  function toggleSelectedTarget(target: LiveChatTemplateTarget) {
+    const targetKey = getResolvedLiveChatTargetKey(target);
+
     setFormState((current) => ({
       ...current,
-      botIds: current.botIds.includes(botId)
-        ? current.botIds.filter((value) => value !== botId)
-        : [...current.botIds, botId],
+      botTargets: current.botTargets.some(
+        (currentTarget) => getResolvedLiveChatTargetKey(currentTarget) === targetKey,
+      )
+        ? current.botTargets.filter(
+            (currentTarget) =>
+              getResolvedLiveChatTargetKey(currentTarget) !== targetKey,
+          )
+        : [...current.botTargets, target],
     }));
   }
 
@@ -225,7 +373,7 @@ export function LiveChatPageClient() {
       name: template.name,
       message: template.message,
       senderMode: template.senderMode,
-      botIds: template.botIds,
+      botTargets: template.botTargets,
     });
     setMessage(null);
   }
@@ -250,16 +398,22 @@ export function LiveChatPageClient() {
           name: formState.name,
           message: isBulkCreateMode ? "" : formState.message,
           senderMode: isBulkCreateMode ? "selected_bots" : formState.senderMode,
-          botIds:
+          botIds: [],
+          botTargets:
             isBulkCreateMode || formState.senderMode === "all_bots"
               ? []
-              : formState.botIds,
+              : formState.botTargets,
           templateCount: editingTemplateId ? 1 : parsedTemplateCount,
           bulkTemplates: isBulkCreateMode
-            ? bulkTemplateDrafts.slice(0, parsedTemplateCount).map((draft) => ({
-                message: draft.message,
-                botId: draft.botId,
-              }))
+            ? bulkTemplateDrafts.slice(0, parsedTemplateCount).map((draft) => {
+                const selectedTarget =
+                  liveChatTargetOptionsByKey.get(draft.targetKey)?.target;
+
+                return {
+                  message: draft.message,
+                  botTarget: selectedTarget,
+                };
+              })
             : undefined,
         }),
       });
@@ -510,25 +664,35 @@ export function LiveChatPageClient() {
   }
 
   function getTemplateBotSummary(template: LiveChatTemplate): string {
+    const templateTargets =
+      template.botTargets.length > 0
+        ? template.botTargets
+        : template.botIds.map(
+            (botId): LiveChatTemplateTarget => ({
+              type: "recall_bot",
+              recallBotId: botId,
+            }),
+          );
+
     if (template.senderMode === "all_bots") {
       return "All active bots in the current session";
     }
 
     if (template.senderMode === "round_robin") {
-      if (template.botIds.length === 0) {
+      if (templateTargets.length === 0) {
         return "Rotates through all active bots in the current session";
       }
 
-      return `Rotates through selected active bots: ${template.botIds
-        .map((botId) => getBotDisplayName(botId))
+      return `Rotates through selected assigned bots: ${templateTargets
+        .map((target) => getTargetDisplayName(target))
         .join(", ")}`;
     }
 
-    if (template.botIds.length === 0) {
-      return "No bots selected";
+    if (templateTargets.length === 0) {
+      return "No bots or scheduled slots selected";
     }
 
-    return template.botIds.map((botId) => getBotDisplayName(botId)).join(", ");
+    return templateTargets.map((target) => getTargetDisplayName(target)).join(", ");
   }
 
   return (
@@ -622,8 +786,9 @@ export function LiveChatPageClient() {
                 <div className="field">
                   <label>Template Rows</label>
                   <p className="muted">
-                    Each row creates one independent live chat template. The bot
-                    selection uses the existing selected-bots assignment logic.
+                    Each row creates one independent live chat template. You can
+                    assign an existing bot or a future scheduled bot slot now,
+                    before the actual Recall bot exists.
                   </p>
                   <div className="rule-list compact-list">
                     {bulkTemplateDrafts
@@ -662,36 +827,38 @@ export function LiveChatPageClient() {
                             </label>
                             <select
                               id={`bulk-template-bot-${index + 1}`}
-                              value={draft.botId}
+                              value={draft.targetKey}
                               onChange={(event) =>
                                 setBulkTemplateDrafts((current) =>
                                   current.map((item, itemIndex) =>
                                     itemIndex === index
                                       ? {
-                                          ...item,
-                                          botId: event.target.value,
+                                        ...item,
+                                          targetKey: event.target.value,
                                         }
                                       : item,
                                   ),
                                 )
                               }
                             >
-                              <option value="">No bot assigned yet</option>
-                              {selectableBots.map((bot) => (
-                                <option key={bot.id} value={bot.recallBotId}>
-                                  {bot.botName} ({bot.recallBotId})
+                              <option value="">No bot or scheduled slot assigned yet</option>
+                              {liveChatTargetOptions.map((option) => (
+                                <option key={option.key} value={option.key}>
+                                  {option.label}
                                 </option>
                               ))}
                             </select>
-                            {draft.botId ? (
+                            {draft.targetKey ? (
                               <p className="code">
-                                Selected bot: {getBotDisplayName(draft.botId)}
+                                Selected sender:{" "}
+                                {liveChatTargetOptionsByKey.get(draft.targetKey)?.label ??
+                                  "Missing assignment"}
                               </p>
                             ) : (
                               <p className="message warning">
-                                No bot selected yet. This template can still be
-                                created, but sending will fail until a bot is
-                                assigned.
+                                No bot or scheduled slot selected yet. This
+                                template can still be created, but sending will
+                                fail until an assignment is added.
                               </p>
                             )}
                           </div>
@@ -757,23 +924,27 @@ export function LiveChatPageClient() {
                   </div>
 
                   <div className="field">
-                    <label>Selected bots</label>
-                    {selectableBots.length === 0 ? (
-                      <div className="empty">No active or created bots right now.</div>
+                    <label>Selected bots / scheduled bot slots</label>
+                    {liveChatTargetOptions.length === 0 ? (
+                      <div className="empty">
+                        No active bots or scheduled bot slots are available right
+                        now.
+                      </div>
                     ) : (
                       <div className="choice-list">
-                        {selectableBots.map((bot) => (
-                          <label className="choice-item" key={bot.id}>
+                        {liveChatTargetOptions.map((option) => (
+                          <label className="choice-item" key={option.key}>
                             <input
                               type="checkbox"
                               disabled={formState.senderMode === "all_bots"}
-                              checked={formState.botIds.includes(bot.recallBotId)}
-                              onChange={() => toggleSelectedBot(bot.recallBotId)}
+                              checked={formState.botTargets.some(
+                                (target) =>
+                                  getLiveChatTargetKey(target) === option.key,
+                              )}
+                              onChange={() => toggleSelectedTarget(option.target)}
                             />
-                            <span>
-                              {bot.botName} ({bot.recallBotId})
-                            </span>
-                            <span className="muted">Status: {bot.status}</span>
+                            <span>{option.label}</span>
+                            <span className="muted">{option.description}</span>
                           </label>
                         ))}
                       </div>
@@ -781,15 +952,16 @@ export function LiveChatPageClient() {
                     {formState.senderMode === "selected_bots" ? (
                       selectedBotsSummary.length > 0 ? (
                         <p className="code">
-                          Selected bots:{" "}
+                          Selected senders:{" "}
                           {selectedBotsSummary
-                            .map((bot) => `${bot.botName} (${bot.recallBotId})`)
+                            .map((option) => option.label)
                             .join(", ")}
                         </p>
                       ) : (
                         <p className="message warning">
-                          No bots selected yet. You can still save the template, but
-                          sending will fail until bots are assigned.
+                          No senders selected yet. You can still save the
+                          template, but sending will fail until bots or scheduled
+                          slots are assigned.
                         </p>
                       )
                     ) : formState.senderMode === "round_robin" ? (
@@ -797,18 +969,24 @@ export function LiveChatPageClient() {
                         <p className="code">
                           Round robin pool:{" "}
                           {selectedBotsSummary
-                            .map((bot) => `${bot.botName} (${bot.recallBotId})`)
+                            .map((option) => option.label)
                             .join(", ")}
                         </p>
                       ) : (
                         <p className="code">
-                          No bots selected. Round robin will use all active bots in the
-                          current session.
+                          No senders selected. Round robin will use all active
+                          bots in the current session.
                         </p>
                       )
                     ) : (
                       <p className="code">Bot selection is ignored in all_bots mode.</p>
                     )}
+                    {missingSelectedTargets.length > 0 ? (
+                      <p className="message warning">
+                        Some saved assignments are missing from the current
+                        session view and may need to be reassigned.
+                      </p>
+                    ) : null}
                   </div>
                 </>
               )}
@@ -929,6 +1107,15 @@ export function LiveChatPageClient() {
                   <span className="setting-value">{selectableBots.length}</span>
                 </div>
                 <div className="setting-item">
+                  <span className="setting-label">Scheduled Bot Slots</span>
+                  <span className="setting-value">
+                    {scheduledBotJoins.reduce(
+                      (count, schedule) => count + schedule.botSlots.length,
+                      0,
+                    )}
+                  </span>
+                </div>
+                <div className="setting-item">
                   <span className="setting-label">Templates</span>
                   <span className="setting-value">{liveChatTemplates.length}</span>
                 </div>
@@ -942,9 +1129,10 @@ export function LiveChatPageClient() {
             </div>
             <div className="card-body">
               <ul className="helper-list">
-                <li>`Selected Bots` sends only through the bots saved on the template.</li>
-                <li>`Round Robin` sends through one bot per click and rotates through the saved active bot pool.</li>
+                <li>`Selected Bots` can target existing bots or future scheduled bot slots.</li>
+                <li>`Round Robin` sends through one bot per click and rotates through the saved active bot or scheduled-slot pool.</li>
                 <li>`All Active Bots` sends once through every active bot in the current session.</li>
+                <li>Scheduled bot slot assignments stay attached to that exact slot and resolve automatically after the scheduled bot is created.</li>
                 <li>Dry-run and real send still follow `RECALL_SEND_CHAT_ENABLED`.</li>
               </ul>
             </div>

@@ -3,7 +3,7 @@ import {
   deleteLiveChatTemplate,
   updateLiveChatTemplate,
 } from "@/lib/store";
-import type { LiveChatTemplate } from "@/lib/types";
+import type { LiveChatTemplate, LiveChatTemplateTarget } from "@/lib/types";
 
 type RouteContext = {
   params: Promise<{
@@ -19,6 +19,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       message?: string;
       senderMode?: LiveChatTemplate["senderMode"];
       botIds?: string[];
+      botTargets?: LiveChatTemplateTarget[];
     };
 
     const liveChatTemplate = await updateLiveChatTemplate(id, {
@@ -33,6 +34,7 @@ export async function PATCH(request: Request, context: RouteContext) {
               ? "round_robin"
               : "selected_bots",
       botIds: Array.isArray(body.botIds) ? body.botIds : undefined,
+      botTargets: Array.isArray(body.botTargets) ? body.botTargets : undefined,
     });
 
     return NextResponse.json({ liveChatTemplate });

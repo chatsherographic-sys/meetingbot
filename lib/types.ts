@@ -28,6 +28,13 @@ export type ScheduledBotJoinStatus =
   | "failed"
   | "cancelled";
 
+export type ScheduledBotSlot = {
+  id: string;
+  slotNumber: number;
+  botName: string;
+  createdRecallBotId: string | null;
+};
+
 export type ScheduledBotJoin = {
   id: string;
   sessionId: string;
@@ -36,6 +43,7 @@ export type ScheduledBotJoin = {
   scheduledAt: string;
   botCount: number;
   botNames: string[];
+  botSlots: ScheduledBotSlot[];
   transcriptLanguage: string;
   status: ScheduledBotJoinStatus;
   createdBotIds: string[];
@@ -242,6 +250,17 @@ export type LiveChatTemplateSenderMode =
   | "all_bots"
   | "round_robin";
 
+export type LiveChatTemplateTarget =
+  | {
+      type: "recall_bot";
+      recallBotId: string;
+    }
+  | {
+      type: "scheduled_bot_slot";
+      scheduledBotJoinId: string;
+      scheduledBotSlotId: string;
+    };
+
 export type LiveChatTemplate = {
   id: string;
   sessionId: string;
@@ -249,6 +268,7 @@ export type LiveChatTemplate = {
   message: string;
   senderMode: LiveChatTemplateSenderMode;
   botIds: string[];
+  botTargets: LiveChatTemplateTarget[];
   roundRobinIndex: number;
   lastSentBotId: string | null;
   lastSentAt: string | null;

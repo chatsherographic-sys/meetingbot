@@ -24,12 +24,14 @@ import type {
   MeetingSession,
   MeetingSessionStatus,
   LiveChatTemplate,
+  LiveChatTemplateTarget,
   LiveChatLog,
   MatchLog,
   MatchSenderResult,
   PaginatedResult,
   RecallBotRecord,
   RecallBotRole,
+  ScheduledBotSlot,
   ScheduledBotJoin,
   ScheduledBotJoinStatus,
   SenderMode,
@@ -394,6 +396,131 @@ function normalizeScheduledBotJoinStatus(
   return "pending";
 }
 
+function buildScheduledBotSlots(
+  botNames: string[],
+  options?: {
+    existingSlots?: Array<Partial<ScheduledBotSlot>> | null;
+    fallbackCreatedBotIds?: string[] | null;
+    resetCreatedRecallBotIds?: boolean;
+  },
+): ScheduledBotSlot[] {
+  const existingSlots = Array.isArray(options?.existingSlots)
+    ? options.existingSlots
+    : [];
+  const fallbackCreatedBotIds = Array.isArray(options?.fallbackCreatedBotIds)
+    ? options?.fallbackCreatedBotIds
+    : [];
+
+  return botNames.map((botName, index) => {
+    const existingSlot = existingSlots[index];
+    const fallbackCreatedBotId =
+      typeof fallbackCreatedBotIds[index] === "string"
+        ? fallbackCreatedBotIds[index]?.trim() || null
+        : null;
+    const existingCreatedBotId =
+      typeof existingSlot?.createdRecallBotId === "string"
+        ? existingSlot.createdRecallBotId.trim() || null
+        : null;
+
+    return {
+      id:
+        typeof existingSlot?.id === "string" && existingSlot.id.trim()
+          ? existingSlot.id.trim()
+          : randomUUID(),
+      slotNumber: index + 1,
+      botName,
+      createdRecallBotId: options?.resetCreatedRecallBotIds
+        ? null
+        : existingCreatedBotId ?? fallbackCreatedBotId,
+    };
+  });
+}
+
+function normalizeLiveChatTemplateTarget(
+  value: unknown,
+): LiveChatTemplateTarget | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<LiveChatTemplateTarget>;
+
+  if (
+    candidate.type === "scheduled_bot_slot" &&
+    typeof candidate.scheduledBotJoinId === "string" &&
+    typeof candidate.scheduledBotSlotId === "string"
+  ) {
+    const scheduledBotJoinId = candidate.scheduledBotJoinId.trim();
+    const scheduledBotSlotId = candidate.scheduledBotSlotId.trim();
+
+    if (!scheduledBotJoinId || !scheduledBotSlotId) {
+      return null;
+    }
+
+    return {
+      type: "scheduled_bot_slot",
+      scheduledBotJoinId,
+      scheduledBotSlotId,
+    };
+  }
+
+  if (
+    candidate.type === "recall_bot" &&
+    typeof candidate.recallBotId === "string"
+  ) {
+    const recallBotId = candidate.recallBotId.trim();
+
+    if (!recallBotId) {
+      return null;
+    }
+
+    return {
+      type: "recall_bot",
+      recallBotId,
+    };
+  }
+
+  return null;
+}
+
+function getLiveChatTemplateTargetKey(target: LiveChatTemplateTarget): string {
+  return target.type === "scheduled_bot_slot"
+    ? `scheduled_bot_slot:${target.scheduledBotJoinId}:${target.scheduledBotSlotId}`
+    : `recall_bot:${target.recallBotId}`;
+}
+
+function normalizeLiveChatTemplateTargets(
+  targets: unknown,
+  fallbackBotIds?: string[],
+): LiveChatTemplateTarget[] {
+  const parsedTargets = Array.isArray(targets)
+    ? targets
+        .map((target) => normalizeLiveChatTemplateTarget(target))
+        .filter((target): target is LiveChatTemplateTarget => Boolean(target))
+    : [];
+  const nextTargets =
+    parsedTargets.length > 0
+      ? parsedTargets
+      : Array.isArray(fallbackBotIds)
+        ? fallbackBotIds
+            .map((botId) => String(botId ?? "").trim())
+            .filter(Boolean)
+            .map(
+              (recallBotId): LiveChatTemplateTarget => ({
+                type: "recall_bot",
+                recallBotId,
+              }),
+            )
+        : [];
+  const dedupedTargets = new Map<string, LiveChatTemplateTarget>();
+
+  for (const target of nextTargets) {
+    dedupedTargets.set(getLiveChatTemplateTargetKey(target), target);
+  }
+
+  return [...dedupedTargets.values()];
+}
+
 function migrateScheduledBotJoin(
   rawScheduledBotJoin: LegacyScheduledBotJoin,
 ): ScheduledBotJoin {
@@ -432,6 +559,21 @@ function migrateScheduledBotJoin(
         : Array.from({ length: botCount }, (_, index) =>
             botNames[index] || `Bot ${index + 1}`,
           ),
+    botSlots: buildScheduledBotSlots(
+      botNames.length === botCount
+        ? botNames
+        : Array.from({ length: botCount }, (_, index) => botNames[index] || `Bot ${index + 1}`),
+      {
+        existingSlots: Array.isArray(rawScheduledBotJoin.botSlots)
+          ? rawScheduledBotJoin.botSlots
+          : null,
+        fallbackCreatedBotIds: Array.isArray(rawScheduledBotJoin.createdBotIds)
+          ? rawScheduledBotJoin.createdBotIds
+              .map((botId) => String(botId ?? "").trim())
+              .filter(Boolean)
+          : [],
+      },
+    ),
     transcriptLanguage:
       String(rawScheduledBotJoin.transcriptLanguage ?? "zh-CN").trim() || "zh-CN",
     status: normalizeScheduledBotJoinStatus(rawScheduledBotJoin.status),
@@ -1104,6 +1246,14 @@ function migrateLiveChatTemplate(
           .map((botId) => String(botId ?? "").trim())
           .filter(Boolean)
       : [],
+    botTargets: normalizeLiveChatTemplateTargets(
+      rawTemplate.botTargets,
+      Array.isArray(rawTemplate.botIds)
+        ? rawTemplate.botIds
+            .map((botId) => String(botId ?? "").trim())
+            .filter(Boolean)
+        : [],
+    ),
     roundRobinIndex: normalizeNonNegativeInteger(
       Number(rawTemplate.roundRobinIndex ?? 0),
     ),
@@ -2354,6 +2504,7 @@ export async function createScheduledBotJoin(input: {
       scheduledAt: normalizedInput.scheduledAt,
       botCount: normalizedInput.botCount,
       botNames: normalizedInput.botNames,
+      botSlots: buildScheduledBotSlots(normalizedInput.botNames),
       transcriptLanguage: normalizedInput.transcriptLanguage,
       status: "pending",
       createdBotIds: [],
@@ -2441,12 +2592,20 @@ export async function updateScheduledBotJoin(
     scheduledBotJoin.scheduledAt = normalizedInput.scheduledAt;
     scheduledBotJoin.botCount = normalizedInput.botCount;
     scheduledBotJoin.botNames = normalizedInput.botNames;
+    scheduledBotJoin.botSlots = buildScheduledBotSlots(normalizedInput.botNames, {
+      existingSlots: scheduledBotJoin.botSlots,
+      resetCreatedRecallBotIds: shouldResetExecutionState,
+    });
     scheduledBotJoin.transcriptLanguage = normalizedInput.transcriptLanguage;
     scheduledBotJoin.enabled = normalizedInput.enabled;
 
     if (shouldResetExecutionState) {
       scheduledBotJoin.status = "pending";
       scheduledBotJoin.createdBotIds = [];
+      scheduledBotJoin.botSlots = buildScheduledBotSlots(normalizedInput.botNames, {
+        existingSlots: scheduledBotJoin.botSlots,
+        resetCreatedRecallBotIds: true,
+      });
       scheduledBotJoin.lastRunAt = null;
       scheduledBotJoin.errorMessage = null;
     }
@@ -3092,19 +3251,27 @@ function ensureLiveChatTemplateInput(input: {
   message: string;
   senderMode: LiveChatTemplate["senderMode"];
   botIds: string[];
+  botTargets?: LiveChatTemplateTarget[];
 }): {
   name: string;
   message: string;
   senderMode: LiveChatTemplate["senderMode"];
   botIds: string[];
+  botTargets: LiveChatTemplateTarget[];
 } {
   const name = input.name.trim();
   const message = input.message.trim();
   const senderMode = normalizeLiveChatTemplateSenderMode(input.senderMode);
-  const botIds =
+  const botTargets =
     senderMode === "all_bots"
       ? []
-      : input.botIds.map((botId) => botId.trim()).filter(Boolean);
+      : normalizeLiveChatTemplateTargets(input.botTargets, input.botIds);
+  const botIds = botTargets
+    .filter(
+      (target): target is Extract<LiveChatTemplateTarget, { type: "recall_bot" }> =>
+        target.type === "recall_bot",
+    )
+    .map((target) => target.recallBotId);
 
   if (!name) {
     throw new Error("Template name is required.");
@@ -3119,6 +3286,7 @@ function ensureLiveChatTemplateInput(input: {
     message,
     senderMode,
     botIds,
+    botTargets,
   };
 }
 
@@ -3140,6 +3308,7 @@ export async function createLiveChatTemplate(input: {
   message: string;
   senderMode: LiveChatTemplate["senderMode"];
   botIds: string[];
+  botTargets?: LiveChatTemplateTarget[];
 }): Promise<LiveChatTemplate> {
   return mutateStore(async (store) => {
     const session =
@@ -3159,6 +3328,7 @@ export async function createLiveChatTemplate(input: {
       message: normalizedInput.message,
       senderMode: normalizedInput.senderMode,
       botIds: normalizedInput.botIds,
+      botTargets: normalizedInput.botTargets,
       roundRobinIndex: 0,
       lastSentBotId: null,
       lastSentAt: null,
@@ -3178,6 +3348,7 @@ export async function updateLiveChatTemplate(
     message?: string;
     senderMode?: LiveChatTemplate["senderMode"];
     botIds?: string[];
+    botTargets?: LiveChatTemplateTarget[];
   },
 ): Promise<LiveChatTemplate> {
   return mutateStore(async (store) => {
@@ -3201,16 +3372,24 @@ export async function updateLiveChatTemplate(
       message: input.message ?? template.message,
       senderMode: input.senderMode ?? template.senderMode,
       botIds: input.botIds ?? template.botIds,
+      botTargets: input.botTargets ?? template.botTargets,
     });
+    const currentTargetKeys = template.botTargets.map((target) =>
+      getLiveChatTemplateTargetKey(target),
+    );
+    const nextTargetKeys = normalizedInput.botTargets.map((target) =>
+      getLiveChatTemplateTargetKey(target),
+    );
     const senderConfigChanged =
       normalizedInput.senderMode !== template.senderMode ||
-      normalizedInput.botIds.length !== template.botIds.length ||
-      normalizedInput.botIds.some((botId, index) => botId !== template.botIds[index]);
+      nextTargetKeys.length !== currentTargetKeys.length ||
+      nextTargetKeys.some((targetKey, index) => targetKey !== currentTargetKeys[index]);
 
     template.name = normalizedInput.name;
     template.message = normalizedInput.message;
     template.senderMode = normalizedInput.senderMode;
     template.botIds = normalizedInput.botIds;
+    template.botTargets = normalizedInput.botTargets;
     if (senderConfigChanged) {
       template.roundRobinIndex = 0;
       template.lastSentBotId = null;
@@ -3959,6 +4138,38 @@ function buildTemplateRoundRobinSenderTargets(input: {
     chosenRoundRobinBotName: senderBot.botName,
     nextRoundRobinIndex: normalizeNonNegativeInteger(senderIndex + 1),
   };
+}
+
+function resolveLiveChatTemplateTargetBotIds(input: {
+  template: LiveChatTemplate;
+  recallBots: RecallBotRecord[];
+  scheduledBotJoins: ScheduledBotJoin[];
+}): string[] {
+  const templateTargets =
+    input.template.botTargets.length > 0
+      ? input.template.botTargets
+      : normalizeLiveChatTemplateTargets([], input.template.botIds);
+  const resolvedBotIds: string[] = [];
+
+  for (const target of templateTargets) {
+    if (target.type === "recall_bot") {
+      resolvedBotIds.push(target.recallBotId);
+      continue;
+    }
+
+    const scheduledBotJoin = input.scheduledBotJoins.find(
+      (schedule) => schedule.id === target.scheduledBotJoinId,
+    );
+    const scheduledBotSlot = scheduledBotJoin?.botSlots.find(
+      (slot) => slot.id === target.scheduledBotSlotId,
+    );
+
+    if (scheduledBotSlot?.createdRecallBotId) {
+      resolvedBotIds.push(scheduledBotSlot.createdRecallBotId);
+    }
+  }
+
+  return [...new Set(resolvedBotIds)];
 }
 
 async function executeSenderTargets(input: {
@@ -5708,6 +5919,10 @@ export async function runDueScheduledBotJoins(): Promise<{
         scheduledBotJoin.errorMessage = sessionBlockedMessage;
         scheduledBotJoin.updatedAt = new Date().toISOString();
         scheduledBotJoin.createdBotIds = [];
+        scheduledBotJoin.botSlots = buildScheduledBotSlots(scheduledBotJoin.botNames, {
+          existingSlots: scheduledBotJoin.botSlots,
+          resetCreatedRecallBotIds: true,
+        });
         failedCount += 1;
         completedSchedules.push({ ...scheduledBotJoin });
         continue;
@@ -5719,6 +5934,10 @@ export async function runDueScheduledBotJoins(): Promise<{
           "Selected session has no Zoom URL. Please add Zoom URL before scheduling bots.";
         scheduledBotJoin.updatedAt = new Date().toISOString();
         scheduledBotJoin.createdBotIds = [];
+        scheduledBotJoin.botSlots = buildScheduledBotSlots(scheduledBotJoin.botNames, {
+          existingSlots: scheduledBotJoin.botSlots,
+          resetCreatedRecallBotIds: true,
+        });
         failedCount += 1;
         completedSchedules.push({ ...scheduledBotJoin });
         continue;
@@ -5729,6 +5948,10 @@ export async function runDueScheduledBotJoins(): Promise<{
         scheduledBotJoin.errorMessage = preflight.errors.join(" ");
         scheduledBotJoin.updatedAt = new Date().toISOString();
         scheduledBotJoin.createdBotIds = [];
+        scheduledBotJoin.botSlots = buildScheduledBotSlots(scheduledBotJoin.botNames, {
+          existingSlots: scheduledBotJoin.botSlots,
+          resetCreatedRecallBotIds: true,
+        });
         failedCount += 1;
         completedSchedules.push({ ...scheduledBotJoin });
         continue;
@@ -5736,9 +5959,14 @@ export async function runDueScheduledBotJoins(): Promise<{
 
       const createdBotIds: string[] = [];
       const errors: string[] = [];
+      scheduledBotJoin.botSlots = buildScheduledBotSlots(scheduledBotJoin.botNames, {
+        existingSlots: scheduledBotJoin.botSlots,
+        resetCreatedRecallBotIds: true,
+      });
 
-      for (let index = 0; index < scheduledBotJoin.botNames.length; index += 1) {
-        const botName = scheduledBotJoin.botNames[index];
+      for (let index = 0; index < scheduledBotJoin.botSlots.length; index += 1) {
+        const botSlot = scheduledBotJoin.botSlots[index];
+        const botName = botSlot?.botName ?? scheduledBotJoin.botNames[index];
 
         try {
           const createRequestPayload = buildCreateRecallBotPayload({
@@ -5764,6 +5992,9 @@ export async function runDueScheduledBotJoins(): Promise<{
           });
 
           createdBotIds.push(recallBotRecord.recallBotId);
+          if (botSlot) {
+            botSlot.createdRecallBotId = recallBotRecord.recallBotId;
+          }
         } catch (error) {
           errors.push(
             `Bot ${index + 1} (${botName}): ${
@@ -5775,7 +6006,9 @@ export async function runDueScheduledBotJoins(): Promise<{
         }
       }
 
-      scheduledBotJoin.createdBotIds = createdBotIds;
+      scheduledBotJoin.createdBotIds = scheduledBotJoin.botSlots
+        .map((slot) => slot.createdRecallBotId)
+        .filter((botId): botId is string => Boolean(botId));
       scheduledBotJoin.lastRunAt = new Date().toISOString();
       scheduledBotJoin.updatedAt = scheduledBotJoin.lastRunAt;
 
@@ -5906,17 +6139,25 @@ export async function sendLiveChatTemplate(
     }
 
     const recallBots = store.recallBots.filter((bot) => bot.sessionId === session.id);
+    const resolvedSelectedBotIds = resolveLiveChatTemplateTargetBotIds({
+      template,
+      recallBots,
+      scheduledBotJoins: store.scheduledBotJoins.filter(
+        (schedule) => schedule.sessionId === session.id,
+      ),
+    });
     const senderTargetBuildResult =
       template.senderMode === "round_robin"
         ? buildTemplateRoundRobinSenderTargets({
-            botIds: template.botIds,
+            botIds: resolvedSelectedBotIds,
             recallBots,
             roundRobinIndex: template.roundRobinIndex,
           })
         : buildLiveChatSenderTargets({
             senderMode:
               template.senderMode === "all_bots" ? "all_bots" : "specific_bots",
-            senderBotIds: template.senderMode === "selected_bots" ? template.botIds : [],
+            senderBotIds:
+              template.senderMode === "selected_bots" ? resolvedSelectedBotIds : [],
             recallBots,
             roundRobinIndex: store.liveChatRoundRobinIndex,
           });

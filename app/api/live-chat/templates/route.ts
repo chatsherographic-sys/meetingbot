@@ -4,11 +4,12 @@ import {
   createLiveChatTemplate,
   listLiveChatTemplates,
 } from "@/lib/store";
-import type { LiveChatTemplate } from "@/lib/types";
+import type { LiveChatTemplate, LiveChatTemplateTarget } from "@/lib/types";
 
 type BulkTemplateCreateInput = {
   message?: string;
   botId?: string;
+  botTarget?: LiveChatTemplateTarget;
 };
 
 function parsePositiveInteger(value: string | null): number | undefined {
@@ -96,6 +97,7 @@ export async function POST(request: Request) {
       message?: string;
       senderMode?: LiveChatTemplate["senderMode"];
       botIds?: string[];
+      botTargets?: LiveChatTemplateTarget[];
       templateCount?: number;
       bulkTemplates?: BulkTemplateCreateInput[];
     };
@@ -115,6 +117,7 @@ export async function POST(request: Request) {
         message: body.message ?? "",
         senderMode,
         botIds,
+        botTargets: Array.isArray(body.botTargets) ? body.botTargets : undefined,
       });
 
       return NextResponse.json({ liveChatTemplate: template }, { status: 201 });
@@ -161,6 +164,11 @@ export async function POST(request: Request) {
               ? [bulkTemplate.botId.trim()]
               : []
             : botIds,
+          botTargets: bulkTemplate?.botTarget
+            ? [bulkTemplate.botTarget]
+            : Array.isArray(body.botTargets)
+              ? body.botTargets
+              : undefined,
         });
 
         successfulTemplates.push({
