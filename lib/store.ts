@@ -6199,8 +6199,6 @@ export async function sendLiveChatTemplate(
       template.lastSentAt = liveChatLog.createdAt;
     }
 
-    template.updatedAt = new Date().toISOString();
-
     return {
       template: { ...template },
       liveChatLog,

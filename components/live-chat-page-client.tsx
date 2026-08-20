@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isBotActiveStatus } from "@/lib/bot-status";
 import {
   formatTime,
@@ -40,6 +40,9 @@ type LiveChatTargetOption = {
   description: string;
   target: LiveChatTemplateTarget;
 };
+
+type LiveChatTemplateSortField = "name" | "createdAt" | "updatedAt";
+type LiveChatTemplateSortDirection = "asc" | "desc";
 
 type LiveChatTemplateFormState = {
   name: string;
@@ -82,6 +85,12 @@ function formatTemplateSenderMode(
   return "Selected Bots";
 }
 
+const liveChatTemplateNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+const LIVE_CHAT_TEMPLATE_SORT_STORAGE_KEY = "live-chat-template-sort";
+
 export function LiveChatPageClient() {
   const { currentSession, currentSessionId, loading: sessionLoading } =
     useMeetingSession();
@@ -104,6 +113,11 @@ export function LiveChatPageClient() {
   const [message, setMessage] = useState<PanelMessage>(null);
   const [error, setError] = useState<string | null>(null);
   const [bulkCreateResult, setBulkCreateResult] = useState<BulkCreateResult>(null);
+  const [templateSortField, setTemplateSortField] =
+    useState<LiveChatTemplateSortField>("name");
+  const [templateSortDirection, setTemplateSortDirection] =
+    useState<LiveChatTemplateSortDirection>("asc");
+  const pendingTemplateAnchorIdRef = useRef<string | null>(null);
 
   const selectableBots = useMemo(
     () => recallBots.filter((bot) => isBotActiveStatus(bot.status)),
@@ -198,6 +212,35 @@ export function LiveChatPageClient() {
         .some((draft) => !draft.message.trim()),
     [bulkTemplateDrafts, isBulkCreateMode, parsedTemplateCount],
   );
+  const sortedLiveChatTemplates = useMemo(() => {
+    return [...liveChatTemplates].sort((leftTemplate, rightTemplate) => {
+      let comparison = 0;
+
+      if (templateSortField === "name") {
+        comparison = liveChatTemplateNameCollator.compare(
+          leftTemplate.name,
+          rightTemplate.name,
+        );
+      } else if (templateSortField === "createdAt") {
+        comparison = leftTemplate.createdAt.localeCompare(rightTemplate.createdAt);
+      } else {
+        comparison = leftTemplate.updatedAt.localeCompare(rightTemplate.updatedAt);
+      }
+
+      if (comparison === 0) {
+        comparison = liveChatTemplateNameCollator.compare(
+          leftTemplate.name,
+          rightTemplate.name,
+        );
+      }
+
+      if (comparison === 0) {
+        comparison = leftTemplate.id.localeCompare(rightTemplate.id);
+      }
+
+      return templateSortDirection === "asc" ? comparison : comparison * -1;
+    });
+  }, [liveChatTemplates, templateSortDirection, templateSortField]);
 
   useEffect(() => {
     setBulkTemplateDrafts((current) => {
@@ -213,6 +256,80 @@ export function LiveChatPageClient() {
       return nextDrafts;
     });
   }, [parsedTemplateCount]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const rawValue = window.localStorage.getItem(LIVE_CHAT_TEMPLATE_SORT_STORAGE_KEY);
+
+    if (!rawValue) {
+      return;
+    }
+
+    try {
+      const parsedValue = JSON.parse(rawValue) as {
+        field?: LiveChatTemplateSortField;
+        direction?: LiveChatTemplateSortDirection;
+      };
+
+      if (
+        parsedValue.field === "name" ||
+        parsedValue.field === "createdAt" ||
+        parsedValue.field === "updatedAt"
+      ) {
+        setTemplateSortField(parsedValue.field);
+      }
+
+      if (parsedValue.direction === "asc" || parsedValue.direction === "desc") {
+        setTemplateSortDirection(parsedValue.direction);
+      }
+    } catch {
+      // Ignore invalid persisted sort state and keep defaults.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      LIVE_CHAT_TEMPLATE_SORT_STORAGE_KEY,
+      JSON.stringify({
+        field: templateSortField,
+        direction: templateSortDirection,
+      }),
+    );
+  }, [templateSortDirection, templateSortField]);
+
+  useEffect(() => {
+    const pendingTemplateAnchorId = pendingTemplateAnchorIdRef.current;
+
+    if (!pendingTemplateAnchorId) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const targetElement = document.querySelector<HTMLElement>(
+        `[data-live-chat-template-id="${pendingTemplateAnchorId}"]`,
+      );
+
+      if (targetElement) {
+        targetElement.scrollIntoView({
+          block: "center",
+          behavior: "smooth",
+        });
+      }
+
+      pendingTemplateAnchorIdRef.current = null;
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [sortedLiveChatTemplates]);
 
   async function loadLiveChatData() {
     const [templatesResponse, logsResponse, botsResponse, schedulesResponse] =
@@ -382,6 +499,7 @@ export function LiveChatPageClient() {
     setSavingTemplate(true);
     setMessage(null);
     setBulkCreateResult(null);
+    const activeTemplateId = editingTemplateId;
 
     try {
       const endpoint = editingTemplateId
@@ -436,6 +554,7 @@ export function LiveChatPageClient() {
       }
 
       if (payload.liveChatTemplate) {
+        pendingTemplateAnchorIdRef.current = activeTemplateId;
         setMessage({
           type: "success",
           text: editingTemplateId
@@ -477,6 +596,7 @@ export function LiveChatPageClient() {
   async function handleSendTemplate(templateId: string) {
     setSendingTemplateId(templateId);
     setMessage(null);
+    pendingTemplateAnchorIdRef.current = templateId;
 
     try {
       const response = await fetch(`/api/live-chat/templates/${templateId}/send`, {
@@ -1147,6 +1267,39 @@ export function LiveChatPageClient() {
                 <p>Send saved Zoom chat messages without retyping them each time.</p>
               </div>
               <div className="actions">
+                <label className="field-inline">
+                  <span>Sort by</span>
+                  <select
+                    value={templateSortField}
+                    onChange={(event) =>
+                      setTemplateSortField(
+                        event.target.value === "createdAt"
+                          ? "createdAt"
+                          : event.target.value === "updatedAt"
+                            ? "updatedAt"
+                            : "name",
+                      )
+                    }
+                  >
+                    <option value="name">Name / Template Number</option>
+                    <option value="createdAt">Created Date</option>
+                    <option value="updatedAt">Updated Date</option>
+                  </select>
+                </label>
+                <label className="field-inline">
+                  <span>Order</span>
+                  <select
+                    value={templateSortDirection}
+                    onChange={(event) =>
+                      setTemplateSortDirection(
+                        event.target.value === "desc" ? "desc" : "asc",
+                      )
+                    }
+                  >
+                    <option value="asc">Ascending</option>
+                    <option value="desc">Descending</option>
+                  </select>
+                </label>
                 <button
                   className="button secondary"
                   type="button"
@@ -1174,8 +1327,12 @@ export function LiveChatPageClient() {
               <div className="empty">No live chat templates yet.</div>
             ) : (
               <div className="rule-list">
-                {liveChatTemplates.map((template) => (
-                  <article className="rule-item" key={template.id}>
+                {sortedLiveChatTemplates.map((template) => (
+                  <article
+                    className="rule-item"
+                    data-live-chat-template-id={template.id}
+                    key={template.id}
+                  >
                     <h3>{template.name}</h3>
                     <p className="code">{template.message}</p>
                     <div className="rule-meta">
