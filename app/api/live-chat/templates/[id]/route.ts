@@ -20,6 +20,10 @@ export async function PATCH(request: Request, context: RouteContext) {
       senderMode?: LiveChatTemplate["senderMode"];
       botIds?: string[];
       botTargets?: LiveChatTemplateTarget[];
+      scheduledSendEnabled?: boolean;
+      scheduledSendAt?: string | null;
+      scheduledRepeatEnabled?: boolean;
+      scheduledRepeatWeekdays?: string[];
     };
 
     const liveChatTemplate = await updateLiveChatTemplate(id, {
@@ -35,6 +39,13 @@ export async function PATCH(request: Request, context: RouteContext) {
               : "selected_bots",
       botIds: Array.isArray(body.botIds) ? body.botIds : undefined,
       botTargets: Array.isArray(body.botTargets) ? body.botTargets : undefined,
+      scheduledSendEnabled: body.scheduledSendEnabled,
+      scheduledSendAt:
+        body.scheduledSendAt === undefined ? undefined : body.scheduledSendAt,
+      scheduledRepeatEnabled: body.scheduledRepeatEnabled,
+      scheduledRepeatWeekdays: Array.isArray(body.scheduledRepeatWeekdays)
+        ? body.scheduledRepeatWeekdays
+        : undefined,
     });
 
     return NextResponse.json({ liveChatTemplate });

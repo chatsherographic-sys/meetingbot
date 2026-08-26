@@ -21,6 +21,11 @@ supabase/migrations/002_recall_bot_roles.sql
 supabase/migrations/003_match_log_latency_diagnostics.sql
 supabase/migrations/004_trigger_rule_aliases.sql
 supabase/migrations/005_trigger_slot_alias_groups.sql
+supabase/migrations/006_live_chat_templates.sql
+supabase/migrations/007_simplified_live_chat_cleanup.sql
+supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql
+supabase/migrations/009_scheduled_bot_weekly_repeat.sql
+supabase/migrations/010_scheduled_live_chat.sql
 ```
 
 The migration keeps RLS enabled and adds the required `service_role` grants for

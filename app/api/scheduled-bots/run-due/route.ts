@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { runDueScheduledBotJoins } from "@/lib/store";
+import {
+  runDueScheduledBotJoins,
+  runDueScheduledLiveChatTemplates,
+} from "@/lib/store";
 
 function isAuthorizedCronRequest(request: Request): boolean {
   const cronSecret = process.env.CRON_SECRET?.trim();
@@ -33,8 +36,13 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await runDueScheduledBotJoins();
-    return NextResponse.json(result);
+    const scheduledBots = await runDueScheduledBotJoins();
+    const scheduledLiveChat = await runDueScheduledLiveChatTemplates();
+
+    return NextResponse.json({
+      scheduledBots,
+      scheduledLiveChat,
+    });
   } catch (error) {
     const message =
       error instanceof Error

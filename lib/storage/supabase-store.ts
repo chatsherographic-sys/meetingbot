@@ -240,6 +240,14 @@ function mapStoreToRows(store: StoreData) {
       round_robin_index: template.roundRobinIndex,
       last_sent_bot_id: template.lastSentBotId,
       last_sent_at: template.lastSentAt,
+      scheduled_send_enabled: template.scheduledSendEnabled,
+      scheduled_send_at: template.scheduledSendAt,
+      scheduled_repeat_enabled: template.scheduledRepeatEnabled,
+      scheduled_repeat_weekdays: template.scheduledRepeatWeekdays,
+      scheduled_next_run_at: template.scheduledNextRunAt,
+      scheduled_last_sent_at: template.scheduledLastSentAt,
+      scheduled_status: template.scheduledStatus,
+      scheduled_error_message: template.scheduledErrorMessage,
       created_at: template.createdAt,
       updated_at: template.updatedAt,
     })),
@@ -550,6 +558,33 @@ export function createSupabaseStoreAdapter(
           lastSentAt:
             typeof template.last_sent_at === "string"
               ? template.last_sent_at
+              : null,
+          scheduledSendEnabled: Boolean(template.scheduled_send_enabled),
+          scheduledSendAt:
+            typeof template.scheduled_send_at === "string"
+              ? template.scheduled_send_at
+              : null,
+          scheduledRepeatEnabled: Boolean(template.scheduled_repeat_enabled),
+          scheduledRepeatWeekdays: normalizeJsonArray(
+            template.scheduled_repeat_weekdays,
+          ),
+          scheduledNextRunAt:
+            typeof template.scheduled_next_run_at === "string"
+              ? template.scheduled_next_run_at
+              : null,
+          scheduledLastSentAt:
+            typeof template.scheduled_last_sent_at === "string"
+              ? template.scheduled_last_sent_at
+              : null,
+          scheduledStatus:
+            template.scheduled_status === "running" ||
+            template.scheduled_status === "completed" ||
+            template.scheduled_status === "failed"
+              ? template.scheduled_status
+              : "pending",
+          scheduledErrorMessage:
+            typeof template.scheduled_error_message === "string"
+              ? template.scheduled_error_message
               : null,
           createdAt: String(template.created_at ?? new Date().toISOString()),
           updatedAt: String(template.updated_at ?? new Date().toISOString()),

@@ -34,6 +34,7 @@ import type {
   ScheduledBotSlot,
   ScheduledBotJoin,
   ScheduledBotJoinStatus,
+  ScheduledLiveChatStatus,
   SenderMode,
   StorageLoggingMode,
   StoreData,
@@ -1380,6 +1381,19 @@ function normalizeLiveChatTemplateSenderMode(
   return "selected_bots";
 }
 
+function normalizeScheduledLiveChatStatus(value: unknown): ScheduledLiveChatStatus {
+  if (
+    value === "pending" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+
+  return "pending";
+}
+
 function migrateLiveChatTemplate(
   rawTemplate: LegacyLiveChatTemplate,
 ): LiveChatTemplate {
@@ -1421,6 +1435,28 @@ function migrateLiveChatTemplate(
     lastSentAt:
       typeof rawTemplate.lastSentAt === "string"
         ? rawTemplate.lastSentAt
+        : null,
+    scheduledSendEnabled: rawTemplate.scheduledSendEnabled === true,
+    scheduledSendAt:
+      typeof rawTemplate.scheduledSendAt === "string"
+        ? rawTemplate.scheduledSendAt
+        : null,
+    scheduledRepeatEnabled: rawTemplate.scheduledRepeatEnabled === true,
+    scheduledRepeatWeekdays: normalizeRepeatWeekdays(
+      rawTemplate.scheduledRepeatWeekdays,
+    ),
+    scheduledNextRunAt:
+      typeof rawTemplate.scheduledNextRunAt === "string"
+        ? rawTemplate.scheduledNextRunAt
+        : null,
+    scheduledLastSentAt:
+      typeof rawTemplate.scheduledLastSentAt === "string"
+        ? rawTemplate.scheduledLastSentAt
+        : null,
+    scheduledStatus: normalizeScheduledLiveChatStatus(rawTemplate.scheduledStatus),
+    scheduledErrorMessage:
+      typeof rawTemplate.scheduledErrorMessage === "string"
+        ? rawTemplate.scheduledErrorMessage
         : null,
     createdAt,
     updatedAt,
@@ -3455,12 +3491,20 @@ function ensureLiveChatTemplateInput(input: {
   senderMode: LiveChatTemplate["senderMode"];
   botIds: string[];
   botTargets?: LiveChatTemplateTarget[];
+  scheduledSendEnabled?: boolean;
+  scheduledSendAt?: string | null;
+  scheduledRepeatEnabled?: boolean;
+  scheduledRepeatWeekdays?: string[];
 }): {
   name: string;
   message: string;
   senderMode: LiveChatTemplate["senderMode"];
   botIds: string[];
   botTargets: LiveChatTemplateTarget[];
+  scheduledSendEnabled: boolean;
+  scheduledSendAt: string | null;
+  scheduledRepeatEnabled: boolean;
+  scheduledRepeatWeekdays: string[];
 } {
   const name = input.name.trim();
   const message = input.message.trim();
@@ -3475,6 +3519,19 @@ function ensureLiveChatTemplateInput(input: {
         target.type === "recall_bot",
     )
     .map((target) => target.recallBotId);
+  const scheduledSendEnabled = input.scheduledSendEnabled === true;
+  const scheduledRepeatEnabled =
+    scheduledSendEnabled && input.scheduledRepeatEnabled === true;
+  const scheduledRepeatWeekdays = normalizeRepeatWeekdays(
+    input.scheduledRepeatWeekdays,
+  );
+  const scheduledDate = input.scheduledSendAt
+    ? new Date(input.scheduledSendAt)
+    : null;
+  const scheduledSendAt =
+    scheduledDate && !Number.isNaN(scheduledDate.getTime())
+      ? scheduledDate.toISOString()
+      : null;
 
   if (!name) {
     throw new Error("Template name is required.");
@@ -3484,12 +3541,28 @@ function ensureLiveChatTemplateInput(input: {
     throw new Error("Template message is required.");
   }
 
+  if (scheduledSendEnabled && !scheduledSendAt) {
+    throw new Error("Scheduled date and time are required when scheduled send is enabled.");
+  }
+
+  if (
+    scheduledSendEnabled &&
+    scheduledRepeatEnabled &&
+    scheduledRepeatWeekdays.length === 0
+  ) {
+    throw new Error("Select at least one weekday for a weekly scheduled send.");
+  }
+
   return {
     name,
     message,
     senderMode,
     botIds,
     botTargets,
+    scheduledSendEnabled,
+    scheduledSendAt,
+    scheduledRepeatEnabled,
+    scheduledRepeatWeekdays,
   };
 }
 
@@ -3512,6 +3585,10 @@ export async function createLiveChatTemplate(input: {
   senderMode: LiveChatTemplate["senderMode"];
   botIds: string[];
   botTargets?: LiveChatTemplateTarget[];
+  scheduledSendEnabled?: boolean;
+  scheduledSendAt?: string | null;
+  scheduledRepeatEnabled?: boolean;
+  scheduledRepeatWeekdays?: string[];
 }): Promise<LiveChatTemplate> {
   return mutateStore(async (store) => {
     const session =
@@ -3535,6 +3612,21 @@ export async function createLiveChatTemplate(input: {
       roundRobinIndex: 0,
       lastSentBotId: null,
       lastSentAt: null,
+      scheduledSendEnabled: normalizedInput.scheduledSendEnabled,
+      scheduledSendAt: normalizedInput.scheduledSendAt,
+      scheduledRepeatEnabled: normalizedInput.scheduledRepeatEnabled,
+      scheduledRepeatWeekdays: normalizedInput.scheduledRepeatWeekdays,
+      scheduledNextRunAt: normalizedInput.scheduledSendEnabled
+        ? normalizedInput.scheduledRepeatEnabled
+          ? calculateInitialWeeklyRunAt(
+              normalizedInput.scheduledSendAt as string,
+              normalizedInput.scheduledRepeatWeekdays,
+            )
+          : normalizedInput.scheduledSendAt
+        : null,
+      scheduledLastSentAt: null,
+      scheduledStatus: "pending",
+      scheduledErrorMessage: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -3552,6 +3644,10 @@ export async function updateLiveChatTemplate(
     senderMode?: LiveChatTemplate["senderMode"];
     botIds?: string[];
     botTargets?: LiveChatTemplateTarget[];
+    scheduledSendEnabled?: boolean;
+    scheduledSendAt?: string | null;
+    scheduledRepeatEnabled?: boolean;
+    scheduledRepeatWeekdays?: string[];
   },
 ): Promise<LiveChatTemplate> {
   return mutateStore(async (store) => {
@@ -3576,6 +3672,16 @@ export async function updateLiveChatTemplate(
       senderMode: input.senderMode ?? template.senderMode,
       botIds: input.botIds ?? template.botIds,
       botTargets: input.botTargets ?? template.botTargets,
+      scheduledSendEnabled:
+        input.scheduledSendEnabled ?? template.scheduledSendEnabled,
+      scheduledSendAt:
+        input.scheduledSendAt === undefined
+          ? template.scheduledSendAt
+          : input.scheduledSendAt,
+      scheduledRepeatEnabled:
+        input.scheduledRepeatEnabled ?? template.scheduledRepeatEnabled,
+      scheduledRepeatWeekdays:
+        input.scheduledRepeatWeekdays ?? template.scheduledRepeatWeekdays,
     });
     const currentTargetKeys = template.botTargets.map((target) =>
       getLiveChatTemplateTargetKey(target),
@@ -3587,6 +3693,15 @@ export async function updateLiveChatTemplate(
       normalizedInput.senderMode !== template.senderMode ||
       nextTargetKeys.length !== currentTargetKeys.length ||
       nextTargetKeys.some((targetKey, index) => targetKey !== currentTargetKeys[index]);
+    const scheduledConfigChanged =
+      normalizedInput.scheduledSendEnabled !== template.scheduledSendEnabled ||
+      normalizedInput.scheduledSendAt !== template.scheduledSendAt ||
+      normalizedInput.scheduledRepeatEnabled !== template.scheduledRepeatEnabled ||
+      normalizedInput.scheduledRepeatWeekdays.length !==
+        template.scheduledRepeatWeekdays.length ||
+      normalizedInput.scheduledRepeatWeekdays.some(
+        (weekday, index) => weekday !== template.scheduledRepeatWeekdays[index],
+      );
 
     template.name = normalizedInput.name;
     template.message = normalizedInput.message;
@@ -3597,6 +3712,23 @@ export async function updateLiveChatTemplate(
       template.roundRobinIndex = 0;
       template.lastSentBotId = null;
       template.lastSentAt = null;
+    }
+    if (scheduledConfigChanged) {
+      template.scheduledSendEnabled = normalizedInput.scheduledSendEnabled;
+      template.scheduledSendAt = normalizedInput.scheduledSendAt;
+      template.scheduledRepeatEnabled = normalizedInput.scheduledRepeatEnabled;
+      template.scheduledRepeatWeekdays = normalizedInput.scheduledRepeatWeekdays;
+      template.scheduledNextRunAt = normalizedInput.scheduledSendEnabled
+        ? normalizedInput.scheduledRepeatEnabled
+          ? calculateInitialWeeklyRunAt(
+              normalizedInput.scheduledSendAt as string,
+              normalizedInput.scheduledRepeatWeekdays,
+            )
+          : normalizedInput.scheduledSendAt
+        : null;
+      template.scheduledLastSentAt = null;
+      template.scheduledStatus = "pending";
+      template.scheduledErrorMessage = null;
     }
     template.updatedAt = new Date().toISOString();
 
@@ -6328,19 +6460,13 @@ export async function sendLiveChat(input: {
   });
 }
 
-export async function sendLiveChatTemplate(
-  id: string,
+async function sendLiveChatTemplateFromStore(
+  store: StoreData,
+  template: LiveChatTemplate,
 ): Promise<{
   template: LiveChatTemplate;
   liveChatLog: LiveChatLog;
 }> {
-  return mutateStore(async (store) => {
-    const template = store.liveChatTemplates.find((item) => item.id === id);
-
-    if (!template) {
-      throw new Error("Live chat template not found.");
-    }
-
     const session =
       findMeetingSessionById(store, template.sessionId) ??
       ensureDefaultSessionExists(store);
@@ -6419,6 +6545,119 @@ export async function sendLiveChatTemplate(
     return {
       template: { ...template },
       liveChatLog,
+    };
+}
+
+export async function sendLiveChatTemplate(
+  id: string,
+): Promise<{
+  template: LiveChatTemplate;
+  liveChatLog: LiveChatLog;
+}> {
+  return mutateStore(async (store) => {
+    const template = store.liveChatTemplates.find((item) => item.id === id);
+
+    if (!template) {
+      throw new Error("Live chat template not found.");
+    }
+
+    return sendLiveChatTemplateFromStore(store, template);
+  });
+}
+
+export async function runDueScheduledLiveChatTemplates(): Promise<{
+  checkedAt: string;
+  processedCount: number;
+  completedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  liveChatTemplates: LiveChatTemplate[];
+}> {
+  return mutateStore(async (store) => {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const getScheduledRunAt = (template: LiveChatTemplate): string | null =>
+      template.scheduledNextRunAt ?? template.scheduledSendAt;
+    const dueTemplates = store.liveChatTemplates.filter((template) => {
+      const scheduledRunAt = getScheduledRunAt(template);
+
+      return (
+        template.scheduledSendEnabled &&
+        template.scheduledStatus === "pending" &&
+        Boolean(scheduledRunAt) &&
+        new Date(scheduledRunAt as string).getTime() <= now.getTime()
+      );
+    });
+    const skippedCount = store.liveChatTemplates.filter((template) => {
+      const scheduledRunAt = getScheduledRunAt(template);
+
+      return (
+        template.scheduledSendEnabled &&
+        template.scheduledStatus === "pending" &&
+        Boolean(scheduledRunAt) &&
+        new Date(scheduledRunAt as string).getTime() > now.getTime()
+      );
+    }).length;
+    const processedTemplates: LiveChatTemplate[] = [];
+    let completedCount = 0;
+    let failedCount = 0;
+
+    for (const template of dueTemplates) {
+      // The store mutation queue keeps this occurrence locked while it is sent.
+      template.scheduledStatus = "running";
+      template.scheduledErrorMessage = null;
+
+      try {
+        const { liveChatLog } = await sendLiveChatTemplateFromStore(store, template);
+        const hasSuccessfulSend = liveChatLog.senderResults.some((senderResult) =>
+          isSuccessfulAcceptedSenderStatus(senderResult.status),
+        );
+
+        if (!hasSuccessfulSend) {
+          template.scheduledStatus = "failed";
+          template.scheduledErrorMessage =
+            liveChatLog.errorMessage ??
+            "Scheduled live chat did not have an eligible sender bot.";
+          failedCount += 1;
+          processedTemplates.push({ ...template });
+          continue;
+        }
+
+        template.scheduledLastSentAt = nowIso;
+        template.scheduledErrorMessage = null;
+        if (template.scheduledRepeatEnabled) {
+          template.scheduledNextRunAt = calculateNextWeeklyRunAt(
+            template.scheduledSendAt as string,
+            template.scheduledRepeatWeekdays,
+            now,
+          );
+          template.scheduledStatus = "pending";
+        } else {
+          template.scheduledSendEnabled = false;
+          template.scheduledNextRunAt = null;
+          template.scheduledStatus = "completed";
+        }
+
+        completedCount += 1;
+      } catch (error) {
+        template.scheduledStatus = "failed";
+        template.scheduledErrorMessage =
+          error instanceof Error
+            ? error.message
+            : "Failed to send scheduled live chat template.";
+        failedCount += 1;
+      }
+
+      processedTemplates.push({ ...template });
+    }
+
+    return {
+      checkedAt: nowIso,
+      processedCount: dueTemplates.length,
+      completedCount,
+      failedCount,
+      skippedCount,
+      liveChatTemplates: processedTemplates,
     };
   });
 }

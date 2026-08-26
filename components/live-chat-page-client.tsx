@@ -49,6 +49,11 @@ type LiveChatTemplateFormState = {
   message: string;
   senderMode: LiveChatTemplate["senderMode"];
   botTargets: LiveChatTemplateTarget[];
+  scheduledSendEnabled: boolean;
+  scheduledDate: string;
+  scheduledTime: string;
+  scheduledRepeatEnabled: boolean;
+  scheduledRepeatWeekdays: string[];
 };
 
 const initialFormState: LiveChatTemplateFormState = {
@@ -56,7 +61,62 @@ const initialFormState: LiveChatTemplateFormState = {
   message: "",
   senderMode: "selected_bots",
   botTargets: [],
+  scheduledSendEnabled: false,
+  scheduledDate: "",
+  scheduledTime: "",
+  scheduledRepeatEnabled: false,
+  scheduledRepeatWeekdays: [],
 };
+
+const WEEKDAY_OPTIONS = [
+  { value: "monday", label: "Monday" },
+  { value: "tuesday", label: "Tuesday" },
+  { value: "wednesday", label: "Wednesday" },
+  { value: "thursday", label: "Thursday" },
+  { value: "friday", label: "Friday" },
+  { value: "saturday", label: "Saturday" },
+  { value: "sunday", label: "Sunday" },
+];
+
+function splitScheduledAt(value: string | null): {
+  scheduledDate: string;
+  scheduledTime: string;
+} {
+  if (!value) {
+    return { scheduledDate: "", scheduledTime: "" };
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return { scheduledDate: "", scheduledTime: "" };
+  }
+
+  return {
+    scheduledDate: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`,
+    scheduledTime: `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`,
+  };
+}
+
+function combineScheduledAt(date: string, time: string): string {
+  if (!date || !time) {
+    throw new Error("Scheduled date and time are required.");
+  }
+
+  const scheduledAt = new Date(`${date}T${time}`);
+
+  if (Number.isNaN(scheduledAt.getTime())) {
+    throw new Error("Scheduled date and time are invalid.");
+  }
+
+  return scheduledAt.toISOString();
+}
+
+function formatRepeatWeekdays(weekdays: string[]): string {
+  const labels = new Map(WEEKDAY_OPTIONS.map((weekday) => [weekday.value, weekday.label]));
+
+  return weekdays.map((weekday) => labels.get(weekday) ?? weekday).join(", ");
+}
 
 function createBulkTemplateDrafts(count: number): BulkTemplateDraft[] {
   return Array.from({ length: count }, () => ({
@@ -483,6 +543,10 @@ export function LiveChatPageClient() {
   }
 
   function startEditingTemplate(template: LiveChatTemplate) {
+    const { scheduledDate, scheduledTime } = splitScheduledAt(
+      template.scheduledSendAt,
+    );
+
     setEditingTemplateId(template.id);
     setTemplateCount("1");
     setBulkCreateResult(null);
@@ -491,6 +555,11 @@ export function LiveChatPageClient() {
       message: template.message,
       senderMode: template.senderMode,
       botTargets: template.botTargets,
+      scheduledSendEnabled: template.scheduledSendEnabled,
+      scheduledDate,
+      scheduledTime,
+      scheduledRepeatEnabled: template.scheduledRepeatEnabled,
+      scheduledRepeatWeekdays: template.scheduledRepeatWeekdays,
     });
     setMessage(null);
   }
@@ -502,6 +571,23 @@ export function LiveChatPageClient() {
     const activeTemplateId = editingTemplateId;
 
     try {
+      if (
+        !isBulkCreateMode &&
+        formState.scheduledSendEnabled &&
+        (!formState.scheduledDate || !formState.scheduledTime)
+      ) {
+        throw new Error("Scheduled date and time are required when scheduled send is enabled.");
+      }
+
+      if (
+        !isBulkCreateMode &&
+        formState.scheduledSendEnabled &&
+        formState.scheduledRepeatEnabled &&
+        formState.scheduledRepeatWeekdays.length === 0
+      ) {
+        throw new Error("Select at least one weekday for a weekly scheduled send.");
+      }
+
       const endpoint = editingTemplateId
         ? `/api/live-chat/templates/${editingTemplateId}`
         : "/api/live-chat/templates";
@@ -522,6 +608,19 @@ export function LiveChatPageClient() {
               ? []
               : formState.botTargets,
           templateCount: editingTemplateId ? 1 : parsedTemplateCount,
+          scheduledSendEnabled: isBulkCreateMode
+            ? false
+            : formState.scheduledSendEnabled,
+          scheduledSendAt:
+            !isBulkCreateMode && formState.scheduledSendEnabled
+              ? combineScheduledAt(formState.scheduledDate, formState.scheduledTime)
+              : null,
+          scheduledRepeatEnabled: isBulkCreateMode
+            ? false
+            : formState.scheduledRepeatEnabled,
+          scheduledRepeatWeekdays: isBulkCreateMode
+            ? []
+            : formState.scheduledRepeatWeekdays,
           bulkTemplates: isBulkCreateMode
             ? bulkTemplateDrafts.slice(0, parsedTemplateCount).map((draft) => {
                 const selectedTarget =
@@ -1108,6 +1207,100 @@ export function LiveChatPageClient() {
                       </p>
                     ) : null}
                   </div>
+                  <div className="field">
+                    <label className="choice-item" htmlFor="live-chat-scheduled-send-enabled">
+                      <input
+                        id="live-chat-scheduled-send-enabled"
+                        type="checkbox"
+                        checked={formState.scheduledSendEnabled}
+                        onChange={(event) =>
+                          setFormState((current) => ({
+                            ...current,
+                            scheduledSendEnabled: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Scheduled Send</span>
+                    </label>
+                    {formState.scheduledSendEnabled ? (
+                      <>
+                        <div className="field-grid-2">
+                          <div className="field">
+                            <label htmlFor="live-chat-scheduled-date">Scheduled date</label>
+                            <input
+                              id="live-chat-scheduled-date"
+                              type="date"
+                              value={formState.scheduledDate}
+                              onChange={(event) =>
+                                setFormState((current) => ({
+                                  ...current,
+                                  scheduledDate: event.target.value,
+                                }))
+                              }
+                              required
+                            />
+                          </div>
+                          <div className="field">
+                            <label htmlFor="live-chat-scheduled-time">Scheduled time</label>
+                            <input
+                              id="live-chat-scheduled-time"
+                              type="time"
+                              value={formState.scheduledTime}
+                              onChange={(event) =>
+                                setFormState((current) => ({
+                                  ...current,
+                                  scheduledTime: event.target.value,
+                                }))
+                              }
+                              required
+                            />
+                          </div>
+                        </div>
+                        <label className="choice-item" htmlFor="live-chat-scheduled-repeat-enabled">
+                          <input
+                            id="live-chat-scheduled-repeat-enabled"
+                            type="checkbox"
+                            checked={formState.scheduledRepeatEnabled}
+                            onChange={(event) =>
+                              setFormState((current) => ({
+                                ...current,
+                                scheduledRepeatEnabled: event.target.checked,
+                              }))
+                            }
+                          />
+                          <span>Repeat Weekly</span>
+                        </label>
+                        {formState.scheduledRepeatEnabled ? (
+                          <div className="choice-list" aria-label="Scheduled repeat weekdays">
+                            {WEEKDAY_OPTIONS.map((weekday) => (
+                              <label className="choice-item" key={weekday.value}>
+                                <input
+                                  type="checkbox"
+                                  checked={formState.scheduledRepeatWeekdays.includes(
+                                    weekday.value,
+                                  )}
+                                  onChange={(event) =>
+                                    setFormState((current) => ({
+                                      ...current,
+                                      scheduledRepeatWeekdays: event.target.checked
+                                        ? [
+                                            ...current.scheduledRepeatWeekdays,
+                                            weekday.value,
+                                          ]
+                                        : current.scheduledRepeatWeekdays.filter(
+                                            (value) => value !== weekday.value,
+                                          ),
+                                    }))
+                                  }
+                                />
+                                <span>{weekday.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
                 </>
               )}
 
@@ -1345,8 +1538,40 @@ export function LiveChatPageClient() {
                       <span className="pill">
                         Updated: {formatTime(template.updatedAt)}
                       </span>
+                      <span className="pill">
+                        Scheduled send: {template.scheduledSendEnabled ? "enabled" : "disabled"}
+                      </span>
+                      {template.scheduledSendEnabled ||
+                      template.scheduledLastSentAt ||
+                      template.scheduledStatus !== "pending" ? (
+                        <>
+                          <span className="pill">
+                            Next send: {template.scheduledNextRunAt
+                              ? formatTime(template.scheduledNextRunAt)
+                              : "Not scheduled"}
+                          </span>
+                          {template.scheduledRepeatEnabled ? (
+                            <span className="pill">
+                              Weekly: {formatRepeatWeekdays(template.scheduledRepeatWeekdays)}
+                            </span>
+                          ) : null}
+                          <span className="pill">
+                            Last scheduled send: {template.scheduledLastSentAt
+                              ? formatTime(template.scheduledLastSentAt)
+                              : "Never"}
+                          </span>
+                          <span className={`pill status-${template.scheduledStatus}`}>
+                            Schedule status: {template.scheduledStatus}
+                          </span>
+                        </>
+                      ) : null}
                     </div>
                     <p className="muted">{getTemplateBotSummary(template)}</p>
+                    {template.scheduledErrorMessage ? (
+                      <p className="message error">
+                        Scheduled send error: {template.scheduledErrorMessage}
+                      </p>
+                    ) : null}
                     {template.senderMode === "round_robin" ? (
                       <div className="rule-meta">
                         <span className="pill">

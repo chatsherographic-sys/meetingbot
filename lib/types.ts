@@ -253,6 +253,8 @@ export type LiveChatTemplateSenderMode =
   | "all_bots"
   | "round_robin";
 
+export type ScheduledLiveChatStatus = "pending" | "running" | "completed" | "failed";
+
 export type LiveChatTemplateTarget =
   | {
       type: "recall_bot";
@@ -275,6 +277,14 @@ export type LiveChatTemplate = {
   roundRobinIndex: number;
   lastSentBotId: string | null;
   lastSentAt: string | null;
+  scheduledSendEnabled: boolean;
+  scheduledSendAt: string | null;
+  scheduledRepeatEnabled: boolean;
+  scheduledRepeatWeekdays: string[];
+  scheduledNextRunAt: string | null;
+  scheduledLastSentAt: string | null;
+  scheduledStatus: ScheduledLiveChatStatus;
+  scheduledErrorMessage: string | null;
   createdAt: string;
   updatedAt: string;
 };

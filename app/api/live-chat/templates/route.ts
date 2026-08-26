@@ -98,6 +98,10 @@ export async function POST(request: Request) {
       senderMode?: LiveChatTemplate["senderMode"];
       botIds?: string[];
       botTargets?: LiveChatTemplateTarget[];
+      scheduledSendEnabled?: boolean;
+      scheduledSendAt?: string | null;
+      scheduledRepeatEnabled?: boolean;
+      scheduledRepeatWeekdays?: string[];
       templateCount?: number;
       bulkTemplates?: BulkTemplateCreateInput[];
     };
@@ -118,6 +122,12 @@ export async function POST(request: Request) {
         senderMode,
         botIds,
         botTargets: Array.isArray(body.botTargets) ? body.botTargets : undefined,
+        scheduledSendEnabled: body.scheduledSendEnabled,
+        scheduledSendAt: body.scheduledSendAt,
+        scheduledRepeatEnabled: body.scheduledRepeatEnabled,
+        scheduledRepeatWeekdays: Array.isArray(body.scheduledRepeatWeekdays)
+          ? body.scheduledRepeatWeekdays
+          : undefined,
       });
 
       return NextResponse.json({ liveChatTemplate: template }, { status: 201 });

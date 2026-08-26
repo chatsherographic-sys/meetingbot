@@ -192,6 +192,16 @@ Template send behavior:
 - updates `roundRobinIndex`, `lastSentBotId`, and `lastSentAt` when sender mode is `round_robin`
 - writes a live chat log with success or failure details
 
+Scheduled template sends:
+
+- enable `Scheduled Send` on an individual template and choose a date/time
+- one-time scheduled sends run once, then become `completed` and disable themselves
+- weekly scheduled sends require one or more weekdays and advance to the next selected occurrence after a successful send
+- scheduled sends use the same selected bot, all-bots, round-robin, and scheduled-slot resolution as manual sends
+- the protected Vercel cron route runs scheduled bots first, then due scheduled live chat templates
+- timezone defaults to `Asia/Kuala_Lumpur` when no app timezone is configured
+- failed scheduled sends keep a visible template error and do not silently report success
+
 Live chat logs remain historical records and are not editable.
 
 ## Scheduled Bot Joins
@@ -266,6 +276,7 @@ Live chat template migration:
 - [supabase/migrations/007_simplified_live_chat_cleanup.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/007_simplified_live_chat_cleanup.sql)
 - [supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql)
 - [supabase/migrations/009_scheduled_bot_weekly_repeat.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/009_scheduled_bot_weekly_repeat.sql)
+- [supabase/migrations/010_scheduled_live_chat.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/010_scheduled_live_chat.sql)
 
 If you use Supabase, run these migrations before switching the driver.
 
@@ -336,11 +347,13 @@ If you use Supabase for this simplified live chat version, run:
 3. [supabase/migrations/007_simplified_live_chat_cleanup.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/007_simplified_live_chat_cleanup.sql)
 4. [supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql)
 5. [supabase/migrations/009_scheduled_bot_weekly_repeat.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/009_scheduled_bot_weekly_repeat.sql)
+6. [supabase/migrations/010_scheduled_live_chat.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/010_scheduled_live_chat.sql)
 
 - `006` adds the `live_chat_templates` table
 - `007` adds round-robin template fields and drops old trigger/transcript/webhook tables for the simplified product
 - `008` persists scheduled-bot slots used by Live Chat template assignments
 - `009` adds weekly repeat fields for scheduled bot joins
+- `010` adds scheduled send fields for live chat templates
 
 ## Notes
 
