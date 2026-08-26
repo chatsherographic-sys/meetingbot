@@ -54,6 +54,7 @@ RECALL_REGION=us-west-2
 RECALL_SEND_CHAT_ENABLED=false
 PUBLIC_WEBHOOK_BASE_URL=http://localhost:3000
 VERCEL_AUTOMATION_BYPASS_SECRET=
+CRON_SECRET=your_random_cron_secret
 NEXT_PUBLIC_SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
@@ -67,6 +68,7 @@ Notes:
 - `RECALL_SEND_CHAT_ENABLED=false` keeps chat sending in dry-run mode
 - `PUBLIC_WEBHOOK_BASE_URL` should be the real app URL after deployment
 - `VERCEL_AUTOMATION_BYPASS_SECRET` is optional and used only when Vercel Authentication is enabled
+- `CRON_SECRET` stays server-side only and protects scheduled-bot cron requests
 - `SUPABASE_SERVICE_ROLE_KEY` stays server-side only
 
 ## Pages
@@ -208,8 +210,10 @@ Behavior:
 - each successful weekly run creates a fresh sender-bot batch and advances `nextRunAt`
 - the runner updates the existing stable scheduled-bot slots to the latest Recall bot IDs for that occurrence
 - a running schedule and its saved next run time prevent the same occurrence from being created again by normal repeat checks
-- local MVP auto-runs due schedules only while `/scheduled-bots` stays open
-- production should later use cron or a background worker
+- Vercel Cron calls `GET /api/scheduled-bots/run-due` server-side, so this page does not need to stay open
+- set `CRON_SECRET` in Vercel; Vercel sends it as `Authorization: Bearer <CRON_SECRET>` for cron invocations
+- local testing can call `GET /api/scheduled-bots/run-due?secret=<CRON_SECRET>` outside production
+- Vercel Hobby supports cron only once per day, so meeting-time schedules require Vercel Pro or another external scheduler
 
 ## Recall Send Chat Modes
 
@@ -330,9 +334,13 @@ If you use Supabase for this simplified live chat version, run:
 1. [supabase/migrations/001_initial_schema.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/001_initial_schema.sql)
 2. [supabase/migrations/006_live_chat_templates.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/006_live_chat_templates.sql)
 3. [supabase/migrations/007_simplified_live_chat_cleanup.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/007_simplified_live_chat_cleanup.sql)
+4. [supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql)
+5. [supabase/migrations/009_scheduled_bot_weekly_repeat.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/009_scheduled_bot_weekly_repeat.sql)
 
 - `006` adds the `live_chat_templates` table
 - `007` adds round-robin template fields and drops old trigger/transcript/webhook tables for the simplified product
+- `008` persists scheduled-bot slots used by Live Chat template assignments
+- `009` adds weekly repeat fields for scheduled bot joins
 
 ## Notes
 

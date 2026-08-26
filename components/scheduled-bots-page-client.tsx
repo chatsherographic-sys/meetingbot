@@ -5,12 +5,10 @@ import {
   FormEvent,
   SetStateAction,
   useEffect,
-  useRef,
   useState,
 } from "react";
 import {
   formatTime,
-  isDocumentVisible,
   readJsonResponse,
   type PanelMessage,
 } from "@/components/control-panel-client";
@@ -30,15 +28,6 @@ type ScheduledBotJoinFormState = {
   repeatEnabled: boolean;
   repeatWeekdays: string[];
 };
-
-type RunDueScheduledBotsResult = {
-  checkedAt: string;
-  processedCount: number;
-  completedCount: number;
-  failedCount: number;
-  skippedCount: number;
-  scheduledBotJoins: ScheduledBotJoin[];
-} | null;
 
 const DEFAULT_BOT_COUNT = "1";
 const DEFAULT_TRANSCRIPT_LANGUAGE = "zh-CN";
@@ -141,9 +130,6 @@ export function ScheduledBotsPageClient({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<PanelMessage>(null);
-  const [lastAutoRunTime, setLastAutoRunTime] = useState<string | null>(null);
-  const [lastAutoRunResult, setLastAutoRunResult] =
-    useState<RunDueScheduledBotsResult>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduledBotJoinFormState>(
     createDefaultScheduleFormState(currentSessionId),
   );
@@ -152,8 +138,6 @@ export function ScheduledBotsPageClient({
     useState<ScheduledBotJoinFormState>(
       createDefaultScheduleFormState(currentSessionId),
     );
-  const isRunDueInFlightRef = useRef(false);
-
   const hasCurrentSession = Boolean(currentSession);
   const currentSessionHasZoomUrl = Boolean(currentSession?.zoomUrl.trim());
   const currentSessionBlockedMessage = getSessionOperationBlockedMessage(
@@ -259,66 +243,6 @@ export function ScheduledBotsPageClient({
       active = false;
     };
   }, [currentSessionId]);
-
-  async function performRunDueScheduledBots() {
-    if (isRunDueInFlightRef.current) {
-      return;
-    }
-
-    isRunDueInFlightRef.current = true;
-
-    try {
-      const response = await fetch("/api/scheduled-bots/run-due", {
-        method: "POST",
-      });
-      const payload = await readJsonResponse<
-        RunDueScheduledBotsResult & {
-          error?: string;
-        }
-      >(response);
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Failed to run due scheduled bot joins.");
-      }
-
-      setLastAutoRunTime(new Date().toISOString());
-      setLastAutoRunResult({
-        checkedAt: payload.checkedAt,
-        processedCount: payload.processedCount,
-        completedCount: payload.completedCount,
-        failedCount: payload.failedCount,
-        skippedCount: payload.skippedCount,
-        scheduledBotJoins: payload.scheduledBotJoins,
-      });
-      await loadScheduledBotJoins();
-    } catch (runError) {
-      setLastAutoRunTime(new Date().toISOString());
-      setLastAutoRunResult(null);
-      setMessage({
-        type: "error",
-        text:
-          runError instanceof Error
-            ? `Scheduled bot auto-run failed: ${runError.message}`
-            : "Scheduled bot auto-run failed.",
-      });
-    } finally {
-      isRunDueInFlightRef.current = false;
-    }
-  }
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (!isDocumentVisible()) {
-        return;
-      }
-
-      void performRunDueScheduledBots();
-    }, 10000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, []);
 
   async function handleCreateScheduledBotJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -687,8 +611,8 @@ export function ScheduledBotsPageClient({
           <p className="section-kicker">Scheduled Bots</p>
           <h2>Schedule Recall bot joins</h2>
           <p className="muted">
-            Local MVP only auto-runs while this page is open. Production should
-            use cron/background worker.
+            Due schedules are run by the server-side scheduler and do not need
+            this page to stay open.
           </p>
         </div>
       </section>
@@ -851,7 +775,7 @@ export function ScheduledBotsPageClient({
           <section className="card">
             <div className="card-header">
               <h3>Schedule Notes</h3>
-              <p>Local MVP only auto-runs while this page stays open.</p>
+              <p>Production schedules are checked by the protected server cron.</p>
             </div>
             <div className="card-body">
               {!hasCurrentSession && !sessionLoading ? (
@@ -889,8 +813,8 @@ export function ScheduledBotsPageClient({
               <ul className="helper-list">
                 <li>Scheduled joins use the session Zoom URL automatically.</li>
                 <li>Scheduled bots join the meeting so they can send live Zoom chat later.</li>
-                <li>If a schedule becomes due while this page is open, it runs on the next 10 second check.</li>
-                <li>Production should replace page-open auto-run with cron or a worker.</li>
+                <li>Due schedules run without this page being open.</li>
+                <li>Vercel Cron checks due schedules every minute on supported plans.</li>
               </ul>
             </div>
           </section>
@@ -900,8 +824,8 @@ export function ScheduledBotsPageClient({
           <div className="card-header">
             <div className="section-row">
               <div>
-                <h3>Last auto-run</h3>
-                <p>Due schedules are checked every 10 seconds while this page stays open.</p>
+                <h3>Scheduled Runner</h3>
+                <p>Vercel Cron checks due schedules server-side. Refresh this list to see the latest results.</p>
               </div>
               <div className="actions">
                 <button
@@ -916,18 +840,8 @@ export function ScheduledBotsPageClient({
           </div>
           <div className="card-body">
             <div className="log-meta">
-              <span className="pill">
-                Last auto-run time:{" "}
-                {lastAutoRunTime ? formatTime(lastAutoRunTime) : "Never"}
-              </span>
-              <span className="pill">
-                Processed: {lastAutoRunResult?.processedCount ?? 0}
-              </span>
-              <span className="pill">
-                Completed: {lastAutoRunResult?.completedCount ?? 0}
-              </span>
-              <span className="pill">Failed: {lastAutoRunResult?.failedCount ?? 0}</span>
-              <span className="pill">Not due yet: {lastAutoRunResult?.skippedCount ?? 0}</span>
+              <span className="pill">Server-side cron runs after production deployment</span>
+              <span className="pill">This page only refreshes schedule data</span>
             </div>
           </div>
         </section>

@@ -44,6 +44,7 @@ RECALL_REGION=us-west-2
 RECALL_SEND_CHAT_ENABLED=false
 PUBLIC_WEBHOOK_BASE_URL=https://your-vercel-domain.vercel.app
 VERCEL_AUTOMATION_BYPASS_SECRET=
+CRON_SECRET=use_a_random_secret_of_at_least_16_characters
 OPENAI_API_KEY=
 OPENAI_ALIAS_MODEL=gpt-5-nano
 ```
@@ -54,6 +55,7 @@ Important notes:
 - Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
 - `NEXT_PUBLIC_SUPABASE_URL` is safe for the browser, but the service role key is not.
 - `RECALL_API_KEY` must stay server-side only.
+- `CRON_SECRET` must stay server-side only. Vercel sends it as a Bearer token when it invokes the scheduled-bot cron route.
 - `OPENAI_API_KEY` is optional, must stay server-side only, and is used only for alias suggestions from `/triggers`.
 - `OPENAI_ALIAS_MODEL` is optional and defaults to `gpt-5-nano`.
 - Recommended production bot setup is one listener bot per meeting and extra sender-only bots only when needed.
@@ -81,23 +83,17 @@ Then verify:
 4. Confirm `Storage Health` is `ok`.
 5. Create a meeting session or trigger rule and confirm the row appears in Supabase.
 
-## Production Notes For Scheduled Jobs
+## Scheduled Bot Cron
 
-Current local MVP behavior:
+`vercel.json` registers `GET /api/scheduled-bots/run-due` every minute. The route is protected by `CRON_SECRET`, which Vercel automatically sends in the `Authorization: Bearer` header for production cron invocations.
 
-- `/scheduled-bots` auto-runs due schedules every 10 seconds only while that page is open.
-- `/timer-triggers` auto-runs due timers every 10 seconds only while that page is open.
+For local testing, set `CRON_SECRET` in `.env.local`, restart the dev server, then run:
 
-This is okay for local MVP testing, but it is not a production scheduler.
+```powershell
+Invoke-RestMethod "http://localhost:3000/api/scheduled-bots/run-due?secret=$env:CRON_SECRET"
+```
 
-For production later:
-
-- use Vercel Cron or another background worker
-- call the existing endpoints
-  - `POST /api/scheduled-bots/run-due`
-  - `POST /api/timer-triggers/run-due`
-
-Do not add cron until you are ready to manage production scheduling deliberately.
+Vercel Cron runs only on production deployments. Vercel Hobby currently permits cron only once per day, which cannot meet meeting-time scheduling requirements; use Vercel Pro or another authenticated external scheduler for per-minute checks.
 
 ## After Deploy
 
