@@ -20,6 +20,8 @@ export async function PATCH(request: Request, context: RouteContext) {
       botNames?: string[];
       transcriptLanguage?: string;
       enabled?: boolean;
+      repeatEnabled?: boolean;
+      repeatWeekdays?: string[];
       status?: ScheduledBotJoinStatus;
     };
 
@@ -35,6 +37,10 @@ export async function PATCH(request: Request, context: RouteContext) {
           ? undefined
           : FIXED_TRANSCRIPT_LANGUAGE,
       enabled: body.enabled,
+      repeatEnabled: body.repeatEnabled,
+      repeatWeekdays: Array.isArray(body.repeatWeekdays)
+        ? body.repeatWeekdays
+        : undefined,
       status: body.status,
     });
 

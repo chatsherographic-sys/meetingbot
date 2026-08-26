@@ -94,7 +94,7 @@ Notes:
 - create one bot or many bots for the current sidebar session
 - read-only current session name, status, and Zoom URL
 - bulk creation with custom names
-- automatic listener/sender role assignment
+- sender-only bot creation
 - refresh bot status
 - stop bot
 - stop all active bots in the current session
@@ -202,6 +202,12 @@ Behavior:
 - schedules are blocked if the current session has no Zoom URL
 - due schedules run sequentially
 - schedule status moves through `pending`, `running`, `completed`, `failed`, or `cancelled`
+- one-time schedules run once and then become `completed`
+- weekly schedules can repeat on one or more selected weekdays at the saved time
+- weekly recurrence uses `Asia/Kuala_Lumpur` when no app timezone is configured
+- each successful weekly run creates a fresh sender-bot batch and advances `nextRunAt`
+- the runner updates the existing stable scheduled-bot slots to the latest Recall bot IDs for that occurrence
+- a running schedule and its saved next run time prevent the same occurrence from being created again by normal repeat checks
 - local MVP auto-runs due schedules only while `/scheduled-bots` stays open
 - production should later use cron or a background worker
 
@@ -254,6 +260,8 @@ Live chat template migration:
 
 - [supabase/migrations/006_live_chat_templates.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/006_live_chat_templates.sql)
 - [supabase/migrations/007_simplified_live_chat_cleanup.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/007_simplified_live_chat_cleanup.sql)
+- [supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/008_scheduled_bot_slots_and_live_chat_targets.sql)
+- [supabase/migrations/009_scheduled_bot_weekly_repeat.sql](/C:/Users/Danny/OneDrive/Documents/Recall%20Zoom%20Bot%20Control%20Panel/supabase/migrations/009_scheduled_bot_weekly_repeat.sql)
 
 If you use Supabase, run these migrations before switching the driver.
 

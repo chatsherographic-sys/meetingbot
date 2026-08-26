@@ -39,6 +39,8 @@ export async function POST(request: Request) {
       botCount?: number | string;
       botNames?: string[];
       enabled?: boolean;
+      repeatEnabled?: boolean;
+      repeatWeekdays?: string[];
     };
 
     const scheduledBotJoin = await createScheduledBotJoin({
@@ -49,6 +51,10 @@ export async function POST(request: Request) {
       botNames: Array.isArray(body.botNames) ? body.botNames : [],
       transcriptLanguage: FIXED_TRANSCRIPT_LANGUAGE,
       enabled: body.enabled ?? true,
+      repeatEnabled: body.repeatEnabled ?? false,
+      repeatWeekdays: Array.isArray(body.repeatWeekdays)
+        ? body.repeatWeekdays
+        : [],
     });
 
     return NextResponse.json({ scheduledBotJoin }, { status: 201 });

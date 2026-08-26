@@ -48,6 +48,16 @@ import type {
 } from "@/lib/types";
 export const DEFAULT_SESSION_ID = "default-session";
 export const DEFAULT_SESSION_NAME = "Default Session";
+const DEFAULT_SCHEDULE_TIME_ZONE = "Asia/Kuala_Lumpur";
+const SCHEDULE_WEEKDAYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
 const activeTriggerExecutionLocks = new Map<
   string,
   {
@@ -396,6 +406,147 @@ function normalizeScheduledBotJoinStatus(
   return "pending";
 }
 
+function normalizeRepeatWeekdays(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const weekdays = new Set<string>();
+
+  for (const item of value) {
+    const weekday = String(item ?? "").trim().toLowerCase();
+
+    if ((SCHEDULE_WEEKDAYS as readonly string[]).includes(weekday)) {
+      weekdays.add(weekday);
+    }
+  }
+
+  return SCHEDULE_WEEKDAYS.filter((weekday) => weekdays.has(weekday));
+}
+
+type ZonedDateTimeParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function getZonedDateTimeParts(date: Date): ZonedDateTimeParts {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: DEFAULT_SCHEDULE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  ) as Record<string, number>;
+
+  return {
+    year: values.year,
+    month: values.month,
+    day: values.day,
+    hour: values.hour,
+    minute: values.minute,
+    second: values.second,
+  };
+}
+
+function zonedDateTimeToUtcIso(parts: ZonedDateTimeParts): string {
+  const expectedUtcTimestamp = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+  let timestamp = expectedUtcTimestamp;
+
+  // Reconcile the desired wall-clock time with the fixed app schedule timezone.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const actual = getZonedDateTimeParts(new Date(timestamp));
+    const actualUtcTimestamp = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+      actual.second,
+    );
+    timestamp += expectedUtcTimestamp - actualUtcTimestamp;
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function calculateNextWeeklyRunAt(
+  scheduledAt: string,
+  repeatWeekdays: string[],
+  after: Date,
+): string | null {
+  const scheduledDate = new Date(scheduledAt);
+  const weekdays = normalizeRepeatWeekdays(repeatWeekdays);
+
+  if (Number.isNaN(scheduledDate.getTime()) || weekdays.length === 0) {
+    return null;
+  }
+
+  const scheduledLocalTime = getZonedDateTimeParts(scheduledDate);
+  const afterLocalDate = getZonedDateTimeParts(after);
+  const firstCandidateDate = new Date(
+    Date.UTC(afterLocalDate.year, afterLocalDate.month - 1, afterLocalDate.day),
+  );
+
+  for (let dayOffset = 0; dayOffset <= 7; dayOffset += 1) {
+    const candidateDate = new Date(firstCandidateDate);
+    candidateDate.setUTCDate(candidateDate.getUTCDate() + dayOffset);
+    const weekday = SCHEDULE_WEEKDAYS[candidateDate.getUTCDay()];
+
+    if (!weekdays.includes(weekday)) {
+      continue;
+    }
+
+    const nextRunAt = zonedDateTimeToUtcIso({
+      year: candidateDate.getUTCFullYear(),
+      month: candidateDate.getUTCMonth() + 1,
+      day: candidateDate.getUTCDate(),
+      hour: scheduledLocalTime.hour,
+      minute: scheduledLocalTime.minute,
+      second: scheduledLocalTime.second,
+    });
+
+    if (new Date(nextRunAt).getTime() > after.getTime()) {
+      return nextRunAt;
+    }
+  }
+
+  return null;
+}
+
+function calculateInitialWeeklyRunAt(
+  scheduledAt: string,
+  repeatWeekdays: string[],
+  now = new Date(),
+): string | null {
+  const scheduledTimestamp = new Date(scheduledAt).getTime();
+  const firstEligibleTimestamp = Math.max(now.getTime(), scheduledTimestamp) - 1;
+
+  return calculateNextWeeklyRunAt(
+    scheduledAt,
+    repeatWeekdays,
+    new Date(firstEligibleTimestamp),
+  );
+}
+
 function buildScheduledBotSlots(
   botNames: string[],
   options?: {
@@ -552,6 +703,12 @@ function migrateScheduledBotJoin(
       typeof rawScheduledBotJoin.scheduledAt === "string"
         ? rawScheduledBotJoin.scheduledAt
         : createdAt,
+    repeatEnabled: rawScheduledBotJoin.repeatEnabled === true,
+    repeatWeekdays: normalizeRepeatWeekdays(rawScheduledBotJoin.repeatWeekdays),
+    nextRunAt:
+      typeof rawScheduledBotJoin.nextRunAt === "string"
+        ? rawScheduledBotJoin.nextRunAt
+        : null,
     botCount,
     botNames:
       botNames.length === botCount
@@ -1736,6 +1893,8 @@ function ensureScheduledBotJoinInput(input: {
   botNames?: string[];
   transcriptLanguage: string;
   enabled?: boolean;
+  repeatEnabled?: boolean;
+  repeatWeekdays?: string[];
 }): {
   name: string;
   scheduledAt: string;
@@ -1743,6 +1902,8 @@ function ensureScheduledBotJoinInput(input: {
   botNames: string[];
   transcriptLanguage: string;
   enabled: boolean;
+  repeatEnabled: boolean;
+  repeatWeekdays: string[];
 } {
   const name = input.name.trim();
   const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
@@ -1758,6 +1919,8 @@ function ensureScheduledBotJoinInput(input: {
   }
 
   const botCount = normalizeScheduledBotCount(input.botCount);
+  const repeatEnabled = input.repeatEnabled === true;
+  const repeatWeekdays = normalizeRepeatWeekdays(input.repeatWeekdays);
   const providedBotNames = Array.isArray(input.botNames) ? input.botNames : [];
 
   if (providedBotNames.length !== botCount) {
@@ -1774,6 +1937,10 @@ function ensureScheduledBotJoinInput(input: {
     return trimmedBotName;
   });
 
+  if (repeatEnabled && repeatWeekdays.length === 0) {
+    throw new Error("Select at least one weekday for a weekly repeat schedule.");
+  }
+
   return {
     name,
     scheduledAt: scheduledDate.toISOString(),
@@ -1781,6 +1948,8 @@ function ensureScheduledBotJoinInput(input: {
     botNames,
     transcriptLanguage,
     enabled: input.enabled ?? true,
+    repeatEnabled,
+    repeatWeekdays,
   };
 }
 
@@ -2469,6 +2638,8 @@ export async function createScheduledBotJoin(input: {
   botNames: string[];
   transcriptLanguage: string;
   enabled?: boolean;
+  repeatEnabled?: boolean;
+  repeatWeekdays?: string[];
 }): Promise<ScheduledBotJoin> {
   return mutateStore(async (store) => {
     const requestedSessionId = normalizeSessionIdInput(input.sessionId);
@@ -2494,6 +2665,8 @@ export async function createScheduledBotJoin(input: {
       botNames: input.botNames,
       transcriptLanguage: input.transcriptLanguage,
       enabled: input.enabled,
+      repeatEnabled: input.repeatEnabled,
+      repeatWeekdays: input.repeatWeekdays,
     });
     const now = new Date().toISOString();
     const scheduledBotJoin: ScheduledBotJoin = {
@@ -2502,6 +2675,14 @@ export async function createScheduledBotJoin(input: {
       name: normalizedInput.name,
       enabled: normalizedInput.enabled,
       scheduledAt: normalizedInput.scheduledAt,
+      repeatEnabled: normalizedInput.repeatEnabled,
+      repeatWeekdays: normalizedInput.repeatWeekdays,
+      nextRunAt: normalizedInput.repeatEnabled
+        ? calculateInitialWeeklyRunAt(
+            normalizedInput.scheduledAt,
+            normalizedInput.repeatWeekdays,
+          )
+        : null,
       botCount: normalizedInput.botCount,
       botNames: normalizedInput.botNames,
       botSlots: buildScheduledBotSlots(normalizedInput.botNames),
@@ -2529,6 +2710,8 @@ export async function updateScheduledBotJoin(
     botNames?: string[];
     transcriptLanguage?: string;
     enabled?: boolean;
+    repeatEnabled?: boolean;
+    repeatWeekdays?: string[];
     status?: ScheduledBotJoinStatus;
   },
 ): Promise<ScheduledBotJoin> {
@@ -2576,6 +2759,8 @@ export async function updateScheduledBotJoin(
       transcriptLanguage:
         input.transcriptLanguage ?? scheduledBotJoin.transcriptLanguage,
       enabled: input.enabled ?? scheduledBotJoin.enabled,
+      repeatEnabled: input.repeatEnabled ?? scheduledBotJoin.repeatEnabled,
+      repeatWeekdays: input.repeatWeekdays ?? scheduledBotJoin.repeatWeekdays,
     });
 
     const shouldResetExecutionState =
@@ -2585,11 +2770,23 @@ export async function updateScheduledBotJoin(
       input.botCount !== undefined ||
       input.botNames !== undefined ||
       input.transcriptLanguage !== undefined ||
+      input.repeatEnabled !== undefined ||
+      input.repeatWeekdays !== undefined ||
       (input.enabled === true && scheduledBotJoin.status !== "pending");
 
     scheduledBotJoin.sessionId = session.id;
     scheduledBotJoin.name = normalizedInput.name;
     scheduledBotJoin.scheduledAt = normalizedInput.scheduledAt;
+    scheduledBotJoin.repeatEnabled = normalizedInput.repeatEnabled;
+    scheduledBotJoin.repeatWeekdays = normalizedInput.repeatWeekdays;
+    if (!normalizedInput.repeatEnabled) {
+      scheduledBotJoin.nextRunAt = null;
+    } else if (shouldResetExecutionState || !scheduledBotJoin.nextRunAt) {
+      scheduledBotJoin.nextRunAt = calculateInitialWeeklyRunAt(
+        normalizedInput.scheduledAt,
+        normalizedInput.repeatWeekdays,
+      );
+    }
     scheduledBotJoin.botCount = normalizedInput.botCount;
     scheduledBotJoin.botNames = normalizedInput.botNames;
     scheduledBotJoin.botSlots = buildScheduledBotSlots(normalizedInput.botNames, {
@@ -2607,6 +2804,12 @@ export async function updateScheduledBotJoin(
         resetCreatedRecallBotIds: true,
       });
       scheduledBotJoin.lastRunAt = null;
+      scheduledBotJoin.nextRunAt = normalizedInput.repeatEnabled
+        ? calculateInitialWeeklyRunAt(
+            normalizedInput.scheduledAt,
+            normalizedInput.repeatWeekdays,
+          )
+        : null;
       scheduledBotJoin.errorMessage = null;
     }
 
@@ -5882,17 +6085,21 @@ export async function runDueScheduledBotJoins(): Promise<{
     const now = new Date();
     const nowIso = now.toISOString();
     const preflight = getRecallPreflight();
+    const getScheduledRunAt = (scheduledBotJoin: ScheduledBotJoin): string =>
+      scheduledBotJoin.repeatEnabled
+        ? scheduledBotJoin.nextRunAt ?? scheduledBotJoin.scheduledAt
+        : scheduledBotJoin.scheduledAt;
     const dueSchedules = sortScheduledBotJoins(store.scheduledBotJoins).filter(
       (scheduledBotJoin) =>
         scheduledBotJoin.enabled &&
         scheduledBotJoin.status === "pending" &&
-        new Date(scheduledBotJoin.scheduledAt).getTime() <= now.getTime(),
+        new Date(getScheduledRunAt(scheduledBotJoin)).getTime() <= now.getTime(),
     );
     const skippedCount = sortScheduledBotJoins(store.scheduledBotJoins).filter(
       (scheduledBotJoin) =>
         scheduledBotJoin.enabled &&
         scheduledBotJoin.status === "pending" &&
-        new Date(scheduledBotJoin.scheduledAt).getTime() > now.getTime(),
+        new Date(getScheduledRunAt(scheduledBotJoin)).getTime() > now.getTime(),
     ).length;
     const completedSchedules: ScheduledBotJoin[] = [];
     let completedCount = 0;
@@ -6017,7 +6224,17 @@ export async function runDueScheduledBotJoins(): Promise<{
         scheduledBotJoin.errorMessage = errors.join(" | ");
         failedCount += 1;
       } else {
-        scheduledBotJoin.status = "completed";
+        // Advance before releasing the locked store update so this occurrence cannot run twice.
+        scheduledBotJoin.nextRunAt = scheduledBotJoin.repeatEnabled
+          ? calculateNextWeeklyRunAt(
+              scheduledBotJoin.scheduledAt,
+              scheduledBotJoin.repeatWeekdays,
+              now,
+            )
+          : null;
+        scheduledBotJoin.status = scheduledBotJoin.repeatEnabled
+          ? "pending"
+          : "completed";
         scheduledBotJoin.errorMessage = null;
         completedCount += 1;
       }

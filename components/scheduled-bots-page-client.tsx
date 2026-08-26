@@ -27,6 +27,8 @@ type ScheduledBotJoinFormState = {
   botNames: string[];
   transcriptLanguage: string;
   enabled: boolean;
+  repeatEnabled: boolean;
+  repeatWeekdays: string[];
 };
 
 type RunDueScheduledBotsResult = {
@@ -40,6 +42,15 @@ type RunDueScheduledBotsResult = {
 
 const DEFAULT_BOT_COUNT = "1";
 const DEFAULT_TRANSCRIPT_LANGUAGE = "zh-CN";
+const WEEKDAY_OPTIONS = [
+  { value: "monday", label: "Monday" },
+  { value: "tuesday", label: "Tuesday" },
+  { value: "wednesday", label: "Wednesday" },
+  { value: "thursday", label: "Thursday" },
+  { value: "friday", label: "Friday" },
+  { value: "saturday", label: "Saturday" },
+  { value: "sunday", label: "Sunday" },
+];
 
 function createDefaultScheduleFormState(sessionId: string): ScheduledBotJoinFormState {
   return {
@@ -51,7 +62,17 @@ function createDefaultScheduleFormState(sessionId: string): ScheduledBotJoinForm
     botNames: ["Bot 1"],
     transcriptLanguage: DEFAULT_TRANSCRIPT_LANGUAGE,
     enabled: true,
+    repeatEnabled: false,
+    repeatWeekdays: [],
   };
+}
+
+function formatRepeatWeekdays(weekdays: string[]): string {
+  const labels = new Map(WEEKDAY_OPTIONS.map((weekday) => [weekday.value, weekday.label]));
+
+  return weekdays
+    .map((weekday) => labels.get(weekday) ?? weekday)
+    .join(", ");
 }
 
 function buildDefaultBotNames(count: number): string[] {
@@ -323,6 +344,10 @@ export function ScheduledBotsPageClient({
         );
       }
 
+      if (scheduleForm.repeatEnabled && scheduleForm.repeatWeekdays.length === 0) {
+        throw new Error("Select at least one weekday for a weekly repeat schedule.");
+      }
+
       const response = await fetch("/api/scheduled-bots", {
         method: "POST",
         headers: {
@@ -339,6 +364,8 @@ export function ScheduledBotsPageClient({
           botNames: scheduleForm.botNames,
           transcriptLanguage: scheduleForm.transcriptLanguage,
           enabled: scheduleForm.enabled,
+          repeatEnabled: scheduleForm.repeatEnabled,
+          repeatWeekdays: scheduleForm.repeatWeekdays,
         }),
       });
       const payload = await readJsonResponse<{ error?: string }>(response);
@@ -389,6 +416,8 @@ export function ScheduledBotsPageClient({
       botNames: scheduledBotJoin.botNames,
       transcriptLanguage: scheduledBotJoin.transcriptLanguage,
       enabled: scheduledBotJoin.enabled,
+      repeatEnabled: scheduledBotJoin.repeatEnabled,
+      repeatWeekdays: scheduledBotJoin.repeatWeekdays,
     });
     setMessage(null);
   }
@@ -398,6 +427,13 @@ export function ScheduledBotsPageClient({
     setMessage(null);
 
     try {
+      if (
+        editingScheduleForm.repeatEnabled &&
+        editingScheduleForm.repeatWeekdays.length === 0
+      ) {
+        throw new Error("Select at least one weekday for a weekly repeat schedule.");
+      }
+
       const response = await fetch(`/api/scheduled-bots/${scheduleId}`, {
         method: "PATCH",
         headers: {
@@ -413,6 +449,8 @@ export function ScheduledBotsPageClient({
           botNames: editingScheduleForm.botNames,
           transcriptLanguage: editingScheduleForm.transcriptLanguage,
           enabled: editingScheduleForm.enabled,
+          repeatEnabled: editingScheduleForm.repeatEnabled,
+          repeatWeekdays: editingScheduleForm.repeatWeekdays,
         }),
       });
       const payload = await readJsonResponse<{ error?: string }>(response);
@@ -585,6 +623,63 @@ export function ScheduledBotsPageClient({
     );
   }
 
+  function renderWeeklyRepeatControls(
+    formState: ScheduledBotJoinFormState,
+    setFormState: Dispatch<SetStateAction<ScheduledBotJoinFormState>>,
+    idPrefix: string,
+  ) {
+    return (
+      <div className="field">
+        <label className="choice-item" htmlFor={`${idPrefix}-repeat-enabled`}>
+          <input
+            id={`${idPrefix}-repeat-enabled`}
+            type="checkbox"
+            checked={formState.repeatEnabled}
+            onChange={(event) =>
+              setFormState((current) => ({
+                ...current,
+                repeatEnabled: event.target.checked,
+              }))
+            }
+          />
+          <span>Repeat weekly</span>
+        </label>
+        {formState.repeatEnabled ? (
+          <>
+            <span className="field-hint">Select at least one weekday.</span>
+            <div className="choice-list" aria-label="Repeat weekdays">
+              {WEEKDAY_OPTIONS.map((weekday) => {
+                const inputId = `${idPrefix}-${weekday.value}`;
+                const checked = formState.repeatWeekdays.includes(weekday.value);
+
+                return (
+                  <label className="choice-item" htmlFor={inputId} key={weekday.value}>
+                    <input
+                      id={inputId}
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) =>
+                        setFormState((current) => ({
+                          ...current,
+                          repeatWeekdays: event.target.checked
+                            ? [...current.repeatWeekdays, weekday.value]
+                            : current.repeatWeekdays.filter(
+                                (value) => value !== weekday.value,
+                              ),
+                        }))
+                      }
+                    />
+                    <span>{weekday.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="page-stack">
       <section className="page-header">
@@ -680,6 +775,11 @@ export function ScheduledBotsPageClient({
                 scheduleForm,
                 setScheduleForm,
                 "create-scheduled-bots",
+              )}
+              {renderWeeklyRepeatControls(
+                scheduleForm,
+                setScheduleForm,
+                "create-scheduled-repeat",
               )}
               <label className="choice-item">
                 <input
@@ -954,6 +1054,11 @@ export function ScheduledBotsPageClient({
                             setEditingScheduleForm,
                             `edit-scheduled-bots-${schedule.id}`,
                           )}
+                          {renderWeeklyRepeatControls(
+                            editingScheduleForm,
+                            setEditingScheduleForm,
+                            `edit-scheduled-repeat-${schedule.id}`,
+                          )}
                           <label className="choice-item">
                             <input
                               type="checkbox"
@@ -1010,9 +1115,25 @@ export function ScheduledBotsPageClient({
                               </span>
                             ) : null}
                             <span className="pill">
-                              Scheduled for: {formatTime(schedule.scheduledAt)}
+                              {schedule.repeatEnabled
+                                ? "Weekly Repeat"
+                                : `One-time: ${formatTime(schedule.scheduledAt)}`}
                             </span>
-                            <span className="pill">Bots: {schedule.botCount}</span>
+                            {schedule.repeatEnabled ? (
+                              <>
+                                <span className="pill">
+                                  Weekdays: {formatRepeatWeekdays(schedule.repeatWeekdays)}
+                                </span>
+                                <span className="pill">
+                                  Next run: {schedule.nextRunAt
+                                    ? formatTime(schedule.nextRunAt)
+                                    : "Not scheduled"}
+                                </span>
+                              </>
+                            ) : null}
+                            <span className="pill">
+                              Bots: {schedule.botCount}
+                            </span>
                             <span className="pill">
                               Last run:{" "}
                               {schedule.lastRunAt

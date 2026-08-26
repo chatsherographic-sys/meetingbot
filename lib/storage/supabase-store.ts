@@ -117,6 +117,9 @@ function mapStoreToRows(store: StoreData) {
       name: schedule.name,
       enabled: schedule.enabled,
       scheduled_at: schedule.scheduledAt,
+      repeat_enabled: schedule.repeatEnabled,
+      repeat_weekdays: schedule.repeatWeekdays,
+      next_run_at: schedule.nextRunAt,
       bot_count: schedule.botCount,
       bot_names: schedule.botNames,
       bot_slots: schedule.botSlots,
@@ -410,6 +413,12 @@ export function createSupabaseStoreAdapter(
           name: String(schedule.name ?? ""),
           enabled: Boolean(schedule.enabled),
           scheduledAt: String(schedule.scheduled_at ?? new Date().toISOString()),
+          repeatEnabled: Boolean(schedule.repeat_enabled),
+          repeatWeekdays: normalizeJsonArray(schedule.repeat_weekdays),
+          nextRunAt:
+            typeof schedule.next_run_at === "string"
+              ? schedule.next_run_at
+              : null,
           botCount: Number(schedule.bot_count ?? 1),
           botNames: normalizeJsonArray(schedule.bot_names),
           botSlots:
