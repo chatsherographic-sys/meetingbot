@@ -548,6 +548,66 @@ function calculateInitialWeeklyRunAt(
   );
 }
 
+function formatScheduleTime(date: Date): string {
+  const parts = getZonedDateTimeParts(date);
+  return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+}
+
+function normalizeScheduledBotLeaveTime(
+  value: string | null | undefined,
+  scheduledAt: string,
+): string {
+  const trimmed = String(value ?? "").trim();
+
+  if (!trimmed) {
+    return formatScheduleTime(
+      new Date(new Date(scheduledAt).getTime() + 2 * 60 * 60 * 1000),
+    );
+  }
+
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(trimmed)) {
+    throw new Error("Bot leave time must use HH:mm format.");
+  }
+
+  return trimmed;
+}
+
+function calculateScheduledBotLeaveAt(
+  scheduledRunAt: string,
+  leaveTime: string | null,
+): string {
+  const runAt = new Date(scheduledRunAt);
+  const normalizedLeaveTime = normalizeScheduledBotLeaveTime(
+    leaveTime,
+    scheduledRunAt,
+  );
+  const [hour, minute] = normalizedLeaveTime.split(":").map(Number);
+  const runParts = getZonedDateTimeParts(runAt);
+  let leaveParts: ZonedDateTimeParts = {
+    ...runParts,
+    hour,
+    minute,
+    second: 0,
+  };
+  let leaveAt = new Date(zonedDateTimeToUtcIso(leaveParts));
+
+  // A clock time earlier than the join time belongs to the following local day.
+  if (leaveAt.getTime() <= runAt.getTime()) {
+    const nextLocalDate = new Date(
+      Date.UTC(runParts.year, runParts.month - 1, runParts.day + 1),
+    );
+    leaveParts = {
+      ...leaveParts,
+      year: nextLocalDate.getUTCFullYear(),
+      month: nextLocalDate.getUTCMonth() + 1,
+      day: nextLocalDate.getUTCDate(),
+    };
+    leaveAt = new Date(zonedDateTimeToUtcIso(leaveParts));
+  }
+
+  return leaveAt.toISOString();
+}
+
 function buildScheduledBotSlots(
   botNames: string[],
   options?: {
@@ -684,6 +744,10 @@ function migrateScheduledBotJoin(
     typeof rawScheduledBotJoin.updatedAt === "string"
       ? rawScheduledBotJoin.updatedAt
       : createdAt;
+  const scheduledAt =
+    typeof rawScheduledBotJoin.scheduledAt === "string"
+      ? rawScheduledBotJoin.scheduledAt
+      : createdAt;
   const rawBotCount = Number(rawScheduledBotJoin.botCount ?? 1);
   const botCount = Number.isFinite(rawBotCount)
     ? Math.min(20, Math.max(1, Math.floor(rawBotCount)))
@@ -700,16 +764,17 @@ function migrateScheduledBotJoin(
     name:
       String(rawScheduledBotJoin.name ?? "").trim() || "Scheduled Bot Join",
     enabled: rawScheduledBotJoin.enabled ?? true,
-    scheduledAt:
-      typeof rawScheduledBotJoin.scheduledAt === "string"
-        ? rawScheduledBotJoin.scheduledAt
-        : createdAt,
+    scheduledAt,
     repeatEnabled: rawScheduledBotJoin.repeatEnabled === true,
     repeatWeekdays: normalizeRepeatWeekdays(rawScheduledBotJoin.repeatWeekdays),
     nextRunAt:
       typeof rawScheduledBotJoin.nextRunAt === "string"
         ? rawScheduledBotJoin.nextRunAt
         : null,
+    leaveTime: normalizeScheduledBotLeaveTime(
+      rawScheduledBotJoin.leaveTime,
+      scheduledAt,
+    ),
     botCount,
     botNames:
       botNames.length === botCount
@@ -1143,6 +1208,17 @@ function migrateRecallBotRecord(rawRecord: LegacyRecallBotRecord): RecallBotReco
         : new Date().toISOString(),
     joinedAt:
       typeof rawRecord.joinedAt === "string" ? rawRecord.joinedAt : null,
+    leaveAt:
+      typeof rawRecord.leaveAt === "string" ? rawRecord.leaveAt : null,
+    leftAt: typeof rawRecord.leftAt === "string" ? rawRecord.leftAt : null,
+    autoLeaveStatus:
+      rawRecord.autoLeaveStatus === "completed" || rawRecord.autoLeaveStatus === "failed"
+        ? rawRecord.autoLeaveStatus
+        : "pending",
+    autoLeaveErrorMessage:
+      typeof rawRecord.autoLeaveErrorMessage === "string"
+        ? rawRecord.autoLeaveErrorMessage
+        : null,
     lastStatusCheckedAt:
       typeof rawRecord.lastStatusCheckedAt === "string"
         ? rawRecord.lastStatusCheckedAt
@@ -1931,6 +2007,7 @@ function ensureScheduledBotJoinInput(input: {
   enabled?: boolean;
   repeatEnabled?: boolean;
   repeatWeekdays?: string[];
+  leaveTime?: string | null;
 }): {
   name: string;
   scheduledAt: string;
@@ -1940,6 +2017,7 @@ function ensureScheduledBotJoinInput(input: {
   enabled: boolean;
   repeatEnabled: boolean;
   repeatWeekdays: string[];
+  leaveTime: string;
 } {
   const name = input.name.trim();
   const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
@@ -1977,6 +2055,11 @@ function ensureScheduledBotJoinInput(input: {
     throw new Error("Select at least one weekday for a weekly repeat schedule.");
   }
 
+  const leaveTime = normalizeScheduledBotLeaveTime(
+    input.leaveTime,
+    scheduledDate.toISOString(),
+  );
+
   return {
     name,
     scheduledAt: scheduledDate.toISOString(),
@@ -1986,6 +2069,7 @@ function ensureScheduledBotJoinInput(input: {
     enabled: input.enabled ?? true,
     repeatEnabled,
     repeatWeekdays,
+    leaveTime,
   };
 }
 
@@ -2676,6 +2760,7 @@ export async function createScheduledBotJoin(input: {
   enabled?: boolean;
   repeatEnabled?: boolean;
   repeatWeekdays?: string[];
+  leaveTime?: string | null;
 }): Promise<ScheduledBotJoin> {
   return mutateStore(async (store) => {
     const requestedSessionId = normalizeSessionIdInput(input.sessionId);
@@ -2703,6 +2788,7 @@ export async function createScheduledBotJoin(input: {
       enabled: input.enabled,
       repeatEnabled: input.repeatEnabled,
       repeatWeekdays: input.repeatWeekdays,
+      leaveTime: input.leaveTime,
     });
     const now = new Date().toISOString();
     const scheduledBotJoin: ScheduledBotJoin = {
@@ -2719,6 +2805,7 @@ export async function createScheduledBotJoin(input: {
             normalizedInput.repeatWeekdays,
           )
         : null,
+      leaveTime: normalizedInput.leaveTime,
       botCount: normalizedInput.botCount,
       botNames: normalizedInput.botNames,
       botSlots: buildScheduledBotSlots(normalizedInput.botNames),
@@ -2748,6 +2835,7 @@ export async function updateScheduledBotJoin(
     enabled?: boolean;
     repeatEnabled?: boolean;
     repeatWeekdays?: string[];
+    leaveTime?: string | null;
     status?: ScheduledBotJoinStatus;
   },
 ): Promise<ScheduledBotJoin> {
@@ -2797,6 +2885,7 @@ export async function updateScheduledBotJoin(
       enabled: input.enabled ?? scheduledBotJoin.enabled,
       repeatEnabled: input.repeatEnabled ?? scheduledBotJoin.repeatEnabled,
       repeatWeekdays: input.repeatWeekdays ?? scheduledBotJoin.repeatWeekdays,
+      leaveTime: input.leaveTime ?? scheduledBotJoin.leaveTime,
     });
 
     const shouldResetExecutionState =
@@ -2815,6 +2904,7 @@ export async function updateScheduledBotJoin(
     scheduledBotJoin.scheduledAt = normalizedInput.scheduledAt;
     scheduledBotJoin.repeatEnabled = normalizedInput.repeatEnabled;
     scheduledBotJoin.repeatWeekdays = normalizedInput.repeatWeekdays;
+    scheduledBotJoin.leaveTime = normalizedInput.leaveTime;
     if (!normalizedInput.repeatEnabled) {
       scheduledBotJoin.nextRunAt = null;
     } else if (shouldResetExecutionState || !scheduledBotJoin.nextRunAt) {
@@ -3123,6 +3213,7 @@ function appendRecallBotRecordToStore(
     botName: string;
     role: RecallBotRole;
     transcriptLanguage: string;
+    leaveAt?: string | null;
     createRequestPayload: Record<string, unknown>;
     rawRecallResponse: Record<string, unknown>;
   },
@@ -3140,6 +3231,7 @@ function appendRecallBotRecordToStore(
   const sessionId =
     findMeetingSessionById(store, requestedSessionId)?.id ??
     ensureDefaultSessionExists(store).id;
+  const createdAt = new Date().toISOString();
   const record: RecallBotRecord = {
     id: randomUUID(),
     sessionId,
@@ -3150,8 +3242,15 @@ function appendRecallBotRecordToStore(
     transcriptLanguage: input.transcriptLanguage,
     webhookUrl,
     status: deriveRecallBotStatus(input.rawRecallResponse),
-    createdAt: new Date().toISOString(),
+    createdAt,
     joinedAt: null,
+    leaveAt:
+      typeof input.leaveAt === "string" && !Number.isNaN(new Date(input.leaveAt).getTime())
+        ? new Date(input.leaveAt).toISOString()
+        : new Date(new Date(createdAt).getTime() + 2 * 60 * 60 * 1000).toISOString(),
+    leftAt: null,
+    autoLeaveStatus: "pending",
+    autoLeaveErrorMessage: null,
     lastStatusCheckedAt: new Date().toISOString(),
     lastErrorMessage: null,
     lastStopAttempt: null,
@@ -3929,6 +4028,7 @@ export async function saveRecallBotRecord(input: {
   botName: string;
   role: RecallBotRole;
   transcriptLanguage: string;
+  leaveAt?: string | null;
   createRequestPayload: Record<string, unknown>;
   rawRecallResponse: Record<string, unknown>;
 }): Promise<RecallBotRecord> {
@@ -3972,6 +4072,48 @@ export async function updateRecallBotRecordError(input: {
     }
 
     return applyRecallBotRecordError(record, input);
+  });
+}
+
+export async function updateRecallBotAutoLeave(input: {
+  idOrRecallBotId: string;
+  leaveAt: string | null;
+}): Promise<RecallBotRecord> {
+  return mutateStore(async (store) => {
+    const record = store.recallBots.find(
+      (item) =>
+        item.id === input.idOrRecallBotId ||
+        item.recallBotId === input.idOrRecallBotId,
+    );
+
+    if (!record) {
+      throw new Error("Created bot record not found.");
+    }
+
+    if (record.leftAt || record.autoLeaveStatus === "completed") {
+      throw new Error("Cannot change auto leave after this bot has already left.");
+    }
+
+    if (input.leaveAt) {
+      const parsedLeaveAt = new Date(input.leaveAt);
+
+      if (
+        Number.isNaN(parsedLeaveAt.getTime()) ||
+        parsedLeaveAt.getTime() <= Date.now()
+      ) {
+        throw new Error("Bot leave time must be in the future.");
+      }
+
+      record.leaveAt = parsedLeaveAt.toISOString();
+      record.autoLeaveStatus = "pending";
+      record.autoLeaveErrorMessage = null;
+    } else {
+      record.leaveAt = null;
+      record.autoLeaveStatus = "pending";
+      record.autoLeaveErrorMessage = null;
+    }
+
+    return record;
   });
 }
 
@@ -6238,6 +6380,7 @@ export async function runDueScheduledBotJoins(): Promise<{
     let failedCount = 0;
 
     for (const scheduledBotJoin of dueSchedules) {
+      const scheduledRunAt = getScheduledRunAt(scheduledBotJoin);
       scheduledBotJoin.status = "running";
       scheduledBotJoin.errorMessage = null;
       scheduledBotJoin.lastRunAt = nowIso;
@@ -6298,6 +6441,10 @@ export async function runDueScheduledBotJoins(): Promise<{
 
       const createdBotIds: string[] = [];
       const errors: string[] = [];
+      const leaveAt = calculateScheduledBotLeaveAt(
+        scheduledRunAt,
+        scheduledBotJoin.leaveTime,
+      );
       scheduledBotJoin.botSlots = buildScheduledBotSlots(scheduledBotJoin.botNames, {
         existingSlots: scheduledBotJoin.botSlots,
         resetCreatedRecallBotIds: true,
@@ -6326,6 +6473,7 @@ export async function runDueScheduledBotJoins(): Promise<{
             botName,
             role: "sender",
             transcriptLanguage: scheduledBotJoin.transcriptLanguage,
+            leaveAt,
             createRequestPayload,
             rawRecallResponse,
           });
@@ -6381,6 +6529,98 @@ export async function runDueScheduledBotJoins(): Promise<{
       failedCount,
       skippedCount,
       scheduledBotJoins: completedSchedules,
+    };
+  });
+}
+
+export async function runDueBotAutoLeaves(): Promise<{
+  checkedAt: string;
+  dueCount: number;
+  completedCount: number;
+  failedCount: number;
+  skippedInactiveCount: number;
+  failedBots: Array<{ recallBotId: string; error: string }>;
+}> {
+  return mutateStore(async (store) => {
+    const checkedAt = new Date().toISOString();
+    const now = new Date(checkedAt);
+    const dueBots = store.recallBots.filter((bot) => {
+      if (
+        !bot.leaveAt ||
+        bot.leftAt ||
+        bot.autoLeaveStatus !== "pending"
+      ) {
+        return false;
+      }
+
+      const leaveAt = new Date(bot.leaveAt);
+      return !Number.isNaN(leaveAt.getTime()) && leaveAt.getTime() <= now.getTime();
+    });
+    const failedBots: Array<{ recallBotId: string; error: string }> = [];
+    let completedCount = 0;
+    let skippedInactiveCount = 0;
+
+    for (const bot of dueBots) {
+      if (!isBotActiveStatus(bot.status)) {
+        // Do not call Recall again for a bot that has already ended on its own.
+        bot.leftAt = checkedAt;
+        bot.autoLeaveStatus = "completed";
+        bot.autoLeaveErrorMessage = null;
+        skippedInactiveCount += 1;
+        continue;
+      }
+
+      const attemptedAt = new Date().toISOString();
+
+      try {
+        const stopResult = await stopRecallBot(bot.recallBotId);
+        const stopAttempt = {
+          endpoint: stopResult.endpoint,
+          httpStatus: stopResult.httpStatus,
+          attemptedAt,
+          recallResponseBody: stopResult.responseBody,
+          errorMessage: null,
+        };
+
+        bot.leftAt = new Date().toISOString();
+        bot.autoLeaveStatus = "completed";
+        bot.autoLeaveErrorMessage = null;
+
+        try {
+          const latestRecallResponse = await getRecallBot(bot.recallBotId);
+          applyRecallBotRecordResponse(bot, {
+            rawRecallResponse: latestRecallResponse,
+            stopAttempt,
+          });
+        } catch (refreshError) {
+          applyRecallBotRecordError(bot, {
+            errorMessage: `Auto leave succeeded, but follow-up status refresh failed: ${
+              refreshError instanceof Error
+                ? refreshError.message
+                : "Unknown error."
+            }`,
+            stopAttempt,
+          });
+        }
+
+        completedCount += 1;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Failed to auto leave bot.";
+        bot.autoLeaveStatus = "failed";
+        bot.autoLeaveErrorMessage = errorMessage;
+        applyRecallBotRecordError(bot, { errorMessage });
+        failedBots.push({ recallBotId: bot.recallBotId, error: errorMessage });
+      }
+    }
+
+    return {
+      checkedAt,
+      dueCount: dueBots.length,
+      completedCount,
+      failedCount: failedBots.length,
+      skippedInactiveCount,
+      failedBots,
     };
   });
 }

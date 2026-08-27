@@ -105,6 +105,10 @@ function mapStoreToRows(store: StoreData) {
       status: bot.status,
       created_at: bot.createdAt,
       joined_at: bot.joinedAt,
+      leave_at: bot.leaveAt,
+      left_at: bot.leftAt,
+      auto_leave_status: bot.autoLeaveStatus,
+      auto_leave_error_message: bot.autoLeaveErrorMessage,
       last_status_checked_at: bot.lastStatusCheckedAt,
       last_error_message: bot.lastErrorMessage,
       last_stop_attempt: bot.lastStopAttempt,
@@ -120,6 +124,7 @@ function mapStoreToRows(store: StoreData) {
       repeat_enabled: schedule.repeatEnabled,
       repeat_weekdays: schedule.repeatWeekdays,
       next_run_at: schedule.nextRunAt,
+      leave_time: schedule.leaveTime,
       bot_count: schedule.botCount,
       bot_names: schedule.botNames,
       bot_slots: schedule.botSlots,
@@ -388,6 +393,16 @@ export function createSupabaseStoreAdapter(
           status: String(bot.status ?? "created"),
           createdAt: String(bot.created_at ?? new Date().toISOString()),
           joinedAt: typeof bot.joined_at === "string" ? bot.joined_at : null,
+          leaveAt: typeof bot.leave_at === "string" ? bot.leave_at : null,
+          leftAt: typeof bot.left_at === "string" ? bot.left_at : null,
+          autoLeaveStatus:
+            bot.auto_leave_status === "completed" || bot.auto_leave_status === "failed"
+              ? bot.auto_leave_status
+              : "pending",
+          autoLeaveErrorMessage:
+            typeof bot.auto_leave_error_message === "string"
+              ? bot.auto_leave_error_message
+              : null,
           lastStatusCheckedAt:
             typeof bot.last_status_checked_at === "string"
               ? bot.last_status_checked_at
@@ -427,6 +442,8 @@ export function createSupabaseStoreAdapter(
             typeof schedule.next_run_at === "string"
               ? schedule.next_run_at
               : null,
+          leaveTime:
+            typeof schedule.leave_time === "string" ? schedule.leave_time : null,
           botCount: Number(schedule.bot_count ?? 1),
           botNames: normalizeJsonArray(schedule.bot_names),
           botSlots:

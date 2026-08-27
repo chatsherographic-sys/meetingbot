@@ -41,6 +41,7 @@ export async function POST(request: Request) {
       enabled?: boolean;
       repeatEnabled?: boolean;
       repeatWeekdays?: string[];
+      leaveTime?: string | null;
     };
 
     const scheduledBotJoin = await createScheduledBotJoin({
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
       repeatWeekdays: Array.isArray(body.repeatWeekdays)
         ? body.repeatWeekdays
         : [],
+      leaveTime: body.leaveTime,
     });
 
     return NextResponse.json({ scheduledBotJoin }, { status: 201 });

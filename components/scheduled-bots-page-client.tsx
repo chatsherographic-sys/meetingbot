@@ -27,6 +27,7 @@ type ScheduledBotJoinFormState = {
   enabled: boolean;
   repeatEnabled: boolean;
   repeatWeekdays: string[];
+  leaveTime: string;
 };
 
 const DEFAULT_BOT_COUNT = "1";
@@ -53,6 +54,7 @@ function createDefaultScheduleFormState(sessionId: string): ScheduledBotJoinForm
     enabled: true,
     repeatEnabled: false,
     repeatWeekdays: [],
+    leaveTime: "",
   };
 }
 
@@ -112,6 +114,16 @@ function combineScheduledAt(date: string, time: string): string {
   }
 
   return combined.toISOString();
+}
+
+function getDefaultLeaveTime(scheduledTime: string): string {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(scheduledTime)) {
+    return "";
+  }
+
+  const [hours, minutes] = scheduledTime.split(":").map(Number);
+  const totalMinutes = (hours * 60 + minutes + 120) % (24 * 60);
+  return `${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
 }
 
 type ScheduledBotsPageClientProps = {
@@ -290,6 +302,8 @@ export function ScheduledBotsPageClient({
           enabled: scheduleForm.enabled,
           repeatEnabled: scheduleForm.repeatEnabled,
           repeatWeekdays: scheduleForm.repeatWeekdays,
+          leaveTime:
+            scheduleForm.leaveTime || getDefaultLeaveTime(scheduleForm.scheduledTime),
         }),
       });
       const payload = await readJsonResponse<{ error?: string }>(response);
@@ -342,6 +356,7 @@ export function ScheduledBotsPageClient({
       enabled: scheduledBotJoin.enabled,
       repeatEnabled: scheduledBotJoin.repeatEnabled,
       repeatWeekdays: scheduledBotJoin.repeatWeekdays,
+      leaveTime: scheduledBotJoin.leaveTime ?? "",
     });
     setMessage(null);
   }
@@ -375,6 +390,9 @@ export function ScheduledBotsPageClient({
           enabled: editingScheduleForm.enabled,
           repeatEnabled: editingScheduleForm.repeatEnabled,
           repeatWeekdays: editingScheduleForm.repeatWeekdays,
+          leaveTime:
+            editingScheduleForm.leaveTime ||
+            getDefaultLeaveTime(editingScheduleForm.scheduledTime),
         }),
       });
       const payload = await readJsonResponse<{ error?: string }>(response);
@@ -677,6 +695,23 @@ export function ScheduledBotsPageClient({
                   />
                 </div>
                 <div className="field">
+                  <label htmlFor="scheduled-bot-leave-time">Bot leave time</label>
+                  <input
+                    id="scheduled-bot-leave-time"
+                    type="time"
+                    value={scheduleForm.leaveTime || getDefaultLeaveTime(scheduleForm.scheduledTime)}
+                    onChange={(event) =>
+                      setScheduleForm((current) => ({
+                        ...current,
+                        leaveTime: event.target.value,
+                      }))
+                    }
+                  />
+                  <span className="field-hint">
+                    Defaults to two hours after the scheduled join time.
+                  </span>
+                </div>
+                <div className="field">
                   <label htmlFor="scheduled-bot-count">Number of bots</label>
                   <input
                     id="scheduled-bot-count"
@@ -945,6 +980,25 @@ export function ScheduledBotsPageClient({
                             />
                           </div>
                           <div className="field">
+                            <label htmlFor={`edit-scheduled-leave-time-${schedule.id}`}>
+                              Bot leave time
+                            </label>
+                            <input
+                              id={`edit-scheduled-leave-time-${schedule.id}`}
+                              type="time"
+                              value={
+                                editingScheduleForm.leaveTime ||
+                                getDefaultLeaveTime(editingScheduleForm.scheduledTime)
+                              }
+                              onChange={(event) =>
+                                setEditingScheduleForm((current) => ({
+                                  ...current,
+                                  leaveTime: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="field">
                             <label htmlFor={`edit-scheduled-count-${schedule.id}`}>
                               Number of bots
                             </label>
@@ -1047,6 +1101,9 @@ export function ScheduledBotsPageClient({
                             ) : null}
                             <span className="pill">
                               Bots: {schedule.botCount}
+                            </span>
+                            <span className="pill">
+                              Leave time: {schedule.leaveTime ?? "2 hours after join"}
                             </span>
                             <span className="pill">
                               Last run:{" "}

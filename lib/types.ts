@@ -44,6 +44,7 @@ export type ScheduledBotJoin = {
   repeatEnabled: boolean;
   repeatWeekdays: string[];
   nextRunAt: string | null;
+  leaveTime: string | null;
   botCount: number;
   botNames: string[];
   botSlots: ScheduledBotSlot[];
@@ -182,6 +183,10 @@ export type RecallBotRecord = {
   status: string;
   createdAt: string;
   joinedAt: string | null;
+  leaveAt: string | null;
+  leftAt: string | null;
+  autoLeaveStatus: "pending" | "completed" | "failed";
+  autoLeaveErrorMessage: string | null;
   lastStatusCheckedAt: string | null;
   lastErrorMessage: string | null;
   lastStopAttempt: {

@@ -93,6 +93,20 @@ function ensureValidBotNames(
   });
 }
 
+function resolveManualLeaveAt(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const leaveAt = new Date(value);
+
+  if (Number.isNaN(leaveAt.getTime()) || leaveAt.getTime() <= Date.now()) {
+    throw new Error("Bot leave time must be in the future.");
+  }
+
+  return leaveAt.toISOString();
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -102,6 +116,7 @@ export async function POST(request: Request) {
       botNamePrefix?: string;
       botNames?: string[];
       botCount?: number | string;
+      leaveAt?: string | null;
     };
 
     const sessionId = String(body.sessionId ?? "").trim();
@@ -143,6 +158,7 @@ export async function POST(request: Request) {
     const transcriptLanguage = "";
     const botCount = ensureValidBotCount(body.botCount);
     const botNames = ensureValidBotNames(body.botNames, botNamePrefix, botCount);
+    const leaveAt = resolveManualLeaveAt(body.leaveAt);
 
     if (botCount === 1) {
       const createRequestPayload = buildCreateRecallBotPayload({
@@ -165,6 +181,7 @@ export async function POST(request: Request) {
         botName: botNames[0],
         role: "sender",
         transcriptLanguage,
+        leaveAt,
         createRequestPayload,
         rawRecallResponse,
       });
@@ -199,6 +216,7 @@ export async function POST(request: Request) {
           botName,
           role: "sender",
           transcriptLanguage,
+          leaveAt,
           createRequestPayload,
           rawRecallResponse,
         });

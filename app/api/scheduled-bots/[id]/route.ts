@@ -22,6 +22,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       enabled?: boolean;
       repeatEnabled?: boolean;
       repeatWeekdays?: string[];
+      leaveTime?: string | null;
       status?: ScheduledBotJoinStatus;
     };
 
@@ -41,6 +42,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       repeatWeekdays: Array.isArray(body.repeatWeekdays)
         ? body.repeatWeekdays
         : undefined,
+      leaveTime: body.leaveTime,
       status: body.status,
     });
 

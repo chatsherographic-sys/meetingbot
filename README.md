@@ -199,6 +199,7 @@ Scheduled template sends:
 - weekly scheduled sends require one or more weekdays and advance to the next selected occurrence after a successful send
 - scheduled sends use the same selected bot, all-bots, round-robin, and scheduled-slot resolution as manual sends
 - the protected Vercel cron route runs scheduled bots first, then due scheduled live chat templates
+- the same cron run then leaves bots whose configured auto-leave time is due
 - timezone defaults to `Asia/Kuala_Lumpur` when no app timezone is configured
 - failed scheduled sends keep a visible template error and do not silently report success
 
@@ -216,6 +217,8 @@ Behavior:
 - schedule status moves through `pending`, `running`, `completed`, `failed`, or `cancelled`
 - one-time schedules run once and then become `completed`
 - weekly schedules can repeat on one or more selected weekdays at the saved time
+- each schedule has a bot leave time; it defaults to two hours after the scheduled join time
+- if the leave clock time is earlier than the join time, it is scheduled for the next local day
 - weekly recurrence uses `Asia/Kuala_Lumpur` when no app timezone is configured
 - each successful weekly run creates a fresh sender-bot batch and advances `nextRunAt`
 - the runner updates the existing stable scheduled-bot slots to the latest Recall bot IDs for that occurrence
@@ -224,6 +227,13 @@ Behavior:
 - set `CRON_SECRET` in Vercel; Vercel sends it as `Authorization: Bearer <CRON_SECRET>` for cron invocations
 - local testing can call `GET /api/scheduled-bots/run-due?secret=<CRON_SECRET>` outside production
 - Vercel Hobby supports cron only once per day, so meeting-time schedules require Vercel Pro or another external scheduler
+
+## Automatic Bot Leave
+
+- Manual bot creation accepts an optional `Leave at` date/time. Leaving it empty schedules the bot to leave two hours after it is created.
+- Scheduled bot joins apply their configured leave time to every bot in that occurrence, including weekly repeats.
+- The protected `GET /api/scheduled-bots/run-due` cron route processes scheduled bot joins, scheduled live chat, then due bot auto-leaves.
+- Auto-leave uses Recall's `leave_call` endpoint. A completed or failed auto-leave is recorded on the bot and is not retried automatically.
 
 ## Recall Send Chat Modes
 

@@ -90,7 +90,7 @@ Then verify:
 
 ## Scheduled Bot Cron
 
-`vercel.json` registers `GET /api/scheduled-bots/run-due` every minute. The route is protected by `CRON_SECRET`, which Vercel automatically sends in the `Authorization: Bearer` header for production cron invocations.
+`vercel.json` registers `GET /api/scheduled-bots/run-due` every minute. The route is protected by `CRON_SECRET`, which Vercel automatically sends in the `Authorization: Bearer` header for production cron invocations. Each run processes scheduled bot joins, due scheduled live chat templates, and due bot auto-leaves.
 
 For local testing, set `CRON_SECRET` in `.env.local`, restart the dev server, then run:
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   runDueScheduledBotJoins,
+  runDueBotAutoLeaves,
   runDueScheduledLiveChatTemplates,
 } from "@/lib/store";
 
@@ -38,10 +39,12 @@ export async function GET(request: Request) {
   try {
     const scheduledBots = await runDueScheduledBotJoins();
     const scheduledLiveChat = await runDueScheduledLiveChatTemplates();
+    const autoLeaves = await runDueBotAutoLeaves();
 
     return NextResponse.json({
       scheduledBots,
       scheduledLiveChat,
+      autoLeaves,
     });
   } catch (error) {
     const message =

@@ -39,7 +39,22 @@ function createDefaultBotFormState() {
     transcriptLanguage: "zh-CN",
     botCount: "1",
     botNames: [DEFAULT_BOT_NAME_PREFIX],
+    leaveAt: "",
   };
+}
+
+function toDateTimeLocal(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
 }
 
 function buildDefaultBotNames(prefix: string, count: number): string[] {
@@ -74,6 +89,8 @@ export function BotsPageClient({
     "active",
   );
   const [botForm, setBotForm] = useState(createDefaultBotFormState);
+  const [leaveAtDrafts, setLeaveAtDrafts] = useState<Record<string, string>>({});
+  const [savingLeaveAtBotId, setSavingLeaveAtBotId] = useState<string | null>(null);
   const previousBotCountRef = useRef(1);
   const previousBotNamePrefixRef = useRef(DEFAULT_BOT_NAME_PREFIX);
   const isRefreshAllInFlightRef = useRef(false);
@@ -427,6 +444,43 @@ export function BotsPageClient({
     }
   }
 
+  async function handleSaveLeaveAt(bot: RecallBotRecord) {
+    const draft = leaveAtDrafts[bot.id] ?? toDateTimeLocal(bot.leaveAt);
+    setSavingLeaveAtBotId(bot.id);
+    setBotMessage(null);
+
+    try {
+      const response = await fetch(`/api/recall/bots/${bot.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leaveAt: draft ? new Date(draft).toISOString() : null,
+        }),
+      });
+      const payload = await readJsonResponse<{ error?: string }>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to update bot leave time.");
+      }
+
+      setBotMessage({
+        type: "success",
+        text: draft ? "Auto leave time updated." : "Auto leave time cleared.",
+      });
+      await loadBots();
+    } catch (saveError) {
+      setBotMessage({
+        type: "error",
+        text:
+          saveError instanceof Error
+            ? saveError.message
+            : "Failed to update bot leave time.",
+      });
+    } finally {
+      setSavingLeaveAtBotId(null);
+    }
+  }
+
   async function handleStopAllActiveBots() {
     if (activeBots.length === 0) {
       return;
@@ -683,6 +737,23 @@ export function BotsPageClient({
                 All newly created bots are sender bots for the simplified live
                 chat workflow.
               </p>
+              <div className="field">
+                <label htmlFor="bot-leave-at">Leave at (optional)</label>
+                <input
+                  id="bot-leave-at"
+                  type="datetime-local"
+                  value={botForm.leaveAt}
+                  onChange={(event) =>
+                    setBotForm((current) => ({
+                      ...current,
+                      leaveAt: event.target.value,
+                    }))
+                  }
+                />
+                <span className="field-hint">
+                  Leave blank to automatically leave two hours after creation.
+                </span>
+              </div>
 
               <div className="actions">
                 <button
@@ -949,7 +1020,44 @@ export function BotsPageClient({
                               Joined at:{" "}
                               {bot.joinedAt ? formatTime(bot.joinedAt) : "Not set"}
                             </p>
+                            <p className="code">
+                              Leave at: {bot.leaveAt ? formatTime(bot.leaveAt) : "Not scheduled"}
+                            </p>
+                            <p className="code">Auto leave status: {bot.autoLeaveStatus}</p>
+                            {bot.autoLeaveErrorMessage ? (
+                              <p className="code error-text">
+                                Auto leave error: {bot.autoLeaveErrorMessage}
+                              </p>
+                            ) : null}
                             <p className="code">Meeting URL: {bot.meetingUrl}</p>
+                            {!bot.leftAt ? (
+                              <div className="field-grid-3">
+                                <div className="field">
+                                  <label htmlFor={`leave-at-${bot.id}`}>Auto leave at</label>
+                                  <input
+                                    id={`leave-at-${bot.id}`}
+                                    type="datetime-local"
+                                    value={leaveAtDrafts[bot.id] ?? toDateTimeLocal(bot.leaveAt)}
+                                    onChange={(event) =>
+                                      setLeaveAtDrafts((current) => ({
+                                        ...current,
+                                        [bot.id]: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                </div>
+                                <div className="actions">
+                                  <button
+                                    className="button secondary"
+                                    type="button"
+                                    disabled={savingLeaveAtBotId === bot.id}
+                                    onClick={() => void handleSaveLeaveAt(bot)}
+                                  >
+                                    {savingLeaveAtBotId === bot.id ? "Saving..." : "Save Leave Time"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
                             {bot.lastErrorMessage ? (
                               <p className="code error-text">
                                 Error: {bot.lastErrorMessage}
