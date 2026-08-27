@@ -319,6 +319,10 @@ export function BotsPageClient({
         },
         body: JSON.stringify({
           ...botForm,
+          // datetime-local has no timezone, so resolve it in the user's browser first.
+          leaveAt: botForm.leaveAt
+            ? new Date(botForm.leaveAt).toISOString()
+            : null,
           sessionId: currentSessionId,
         }),
       });

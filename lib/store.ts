@@ -4095,6 +4095,12 @@ export async function updateRecallBotAutoLeave(input: {
     }
 
     if (input.leaveAt) {
+      if (!/(Z|[+-]\d{2}:\d{2})$/i.test(input.leaveAt)) {
+        throw new Error(
+          "Bot leave time must include a timezone. Please choose the time again in the browser.",
+        );
+      }
+
       const parsedLeaveAt = new Date(input.leaveAt);
 
       if (

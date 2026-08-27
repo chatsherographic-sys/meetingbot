@@ -98,7 +98,15 @@ function resolveManualLeaveAt(value: unknown): string | null {
     return null;
   }
 
-  const leaveAt = new Date(value);
+  const leaveAtValue = value.trim();
+
+  if (!/(Z|[+-]\d{2}:\d{2})$/i.test(leaveAtValue)) {
+    throw new Error(
+      "Bot leave time must include a timezone. Please choose the time again in the browser.",
+    );
+  }
+
+  const leaveAt = new Date(leaveAtValue);
 
   if (Number.isNaN(leaveAt.getTime()) || leaveAt.getTime() <= Date.now()) {
     throw new Error("Bot leave time must be in the future.");
