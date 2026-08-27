@@ -213,6 +213,8 @@ Behavior:
 
 - schedules are saved under the current sidebar session
 - schedules are blocked if the current session has no Zoom URL
+- enable `Random name for created bots` to choose a different name from the built-in 100-name pool for each bot in an occurrence
+- weekly schedules with random names generate a fresh batch of names on every occurrence
 - due schedules run sequentially
 - schedule status moves through `pending`, `running`, `completed`, `failed`, or `cancelled`
 - one-time schedules run once and then become `completed`
@@ -230,6 +232,7 @@ Behavior:
 
 ## Automatic Bot Leave
 
+- Manual bot creation can enable `Random name`; the server selects names from the built-in 100-name pool and avoids duplicates within batches of up to 100 bots.
 - Manual bot creation accepts an optional `Leave at` date/time. Leaving it empty schedules the bot to leave two hours after it is created.
 - Scheduled bot joins apply their configured leave time to every bot in that occurrence, including weekly repeats.
 - The protected `GET /api/scheduled-bots/run-due` cron route processes scheduled bot joins, scheduled live chat, then due bot auto-leaves.

@@ -27,6 +27,7 @@ type ScheduledBotJoinFormState = {
   enabled: boolean;
   repeatEnabled: boolean;
   repeatWeekdays: string[];
+  randomNameEnabled: boolean;
   leaveTime: string;
 };
 
@@ -54,6 +55,7 @@ function createDefaultScheduleFormState(sessionId: string): ScheduledBotJoinForm
     enabled: true,
     repeatEnabled: false,
     repeatWeekdays: [],
+    randomNameEnabled: false,
     leaveTime: "",
   };
 }
@@ -302,6 +304,7 @@ export function ScheduledBotsPageClient({
           enabled: scheduleForm.enabled,
           repeatEnabled: scheduleForm.repeatEnabled,
           repeatWeekdays: scheduleForm.repeatWeekdays,
+          randomNameEnabled: scheduleForm.randomNameEnabled,
           leaveTime:
             scheduleForm.leaveTime || getDefaultLeaveTime(scheduleForm.scheduledTime),
         }),
@@ -356,6 +359,7 @@ export function ScheduledBotsPageClient({
       enabled: scheduledBotJoin.enabled,
       repeatEnabled: scheduledBotJoin.repeatEnabled,
       repeatWeekdays: scheduledBotJoin.repeatWeekdays,
+      randomNameEnabled: scheduledBotJoin.randomNameEnabled,
       leaveTime: scheduledBotJoin.leaveTime ?? "",
     });
     setMessage(null);
@@ -390,6 +394,7 @@ export function ScheduledBotsPageClient({
           enabled: editingScheduleForm.enabled,
           repeatEnabled: editingScheduleForm.repeatEnabled,
           repeatWeekdays: editingScheduleForm.repeatWeekdays,
+          randomNameEnabled: editingScheduleForm.randomNameEnabled,
           leaveTime:
             editingScheduleForm.leaveTime ||
             getDefaultLeaveTime(editingScheduleForm.scheduledTime),
@@ -735,6 +740,24 @@ export function ScheduledBotsPageClient({
                 setScheduleForm,
                 "create-scheduled-bots",
               )}
+              <label className="choice-item">
+                <input
+                  type="checkbox"
+                  checked={scheduleForm.randomNameEnabled}
+                  onChange={(event) =>
+                    setScheduleForm((current) => ({
+                      ...current,
+                      randomNameEnabled: event.target.checked,
+                    }))
+                  }
+                />
+                <span>Random name for created bots</span>
+              </label>
+              {scheduleForm.randomNameEnabled ? (
+                <p className="helper-text">
+                  Each bot created by this schedule will use a random name.
+                </p>
+              ) : null}
               {renderWeeklyRepeatControls(
                 scheduleForm,
                 setScheduleForm,
@@ -1022,6 +1045,19 @@ export function ScheduledBotsPageClient({
                             setEditingScheduleForm,
                             `edit-scheduled-bots-${schedule.id}`,
                           )}
+                          <label className="choice-item">
+                            <input
+                              type="checkbox"
+                              checked={editingScheduleForm.randomNameEnabled}
+                              onChange={(event) =>
+                                setEditingScheduleForm((current) => ({
+                                  ...current,
+                                  randomNameEnabled: event.target.checked,
+                                }))
+                              }
+                            />
+                            <span>Random name for created bots</span>
+                          </label>
                           {renderWeeklyRepeatControls(
                             editingScheduleForm,
                             setEditingScheduleForm,
@@ -1102,6 +1138,9 @@ export function ScheduledBotsPageClient({
                             <span className="pill">
                               Bots: {schedule.botCount}
                             </span>
+                            {schedule.randomNameEnabled ? (
+                              <span className="pill">Random names</span>
+                            ) : null}
                             <span className="pill">
                               Leave time: {schedule.leaveTime ?? "2 hours after join"}
                             </span>

@@ -45,6 +45,7 @@ export type ScheduledBotJoin = {
   repeatWeekdays: string[];
   nextRunAt: string | null;
   leaveTime: string | null;
+  randomNameEnabled: boolean;
   botCount: number;
   botNames: string[];
   botSlots: ScheduledBotSlot[];

@@ -39,6 +39,7 @@ function createDefaultBotFormState() {
     transcriptLanguage: "zh-CN",
     botCount: "1",
     botNames: [DEFAULT_BOT_NAME_PREFIX],
+    randomNameEnabled: false,
     leaveAt: "",
   };
 }
@@ -686,6 +687,7 @@ export function BotsPageClient({
                   <input
                     id="singleBotName"
                     value={botForm.botNames[0] ?? botForm.botNamePrefix}
+                    disabled={botForm.randomNameEnabled}
                     onChange={(event) =>
                       setBotForm((current) => ({
                         ...current,
@@ -703,6 +705,7 @@ export function BotsPageClient({
                     <input
                       id="botNamePrefix"
                       value={botForm.botNamePrefix}
+                      disabled={botForm.randomNameEnabled}
                       onChange={(event) =>
                         setBotForm((current) => ({
                           ...current,
@@ -722,6 +725,7 @@ export function BotsPageClient({
                         <input
                           id={`bot-name-${index + 1}`}
                           value={botName}
+                          disabled={botForm.randomNameEnabled}
                           onChange={(event) =>
                             setBotForm((current) => ({
                               ...current,
@@ -737,6 +741,24 @@ export function BotsPageClient({
                   </div>
                 </>
               )}
+              <label className="choice-item">
+                <input
+                  type="checkbox"
+                  checked={botForm.randomNameEnabled}
+                  onChange={(event) =>
+                    setBotForm((current) => ({
+                      ...current,
+                      randomNameEnabled: event.target.checked,
+                    }))
+                  }
+                />
+                <span>Random name</span>
+              </label>
+              {botForm.randomNameEnabled ? (
+                <p className="helper-text">
+                  A random name will be used for each bot when it is created.
+                </p>
+              ) : null}
               <p className="helper-text">
                 All newly created bots are sender bots for the simplified live
                 chat workflow.

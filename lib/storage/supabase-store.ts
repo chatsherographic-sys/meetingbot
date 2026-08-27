@@ -125,6 +125,7 @@ function mapStoreToRows(store: StoreData) {
       repeat_weekdays: schedule.repeatWeekdays,
       next_run_at: schedule.nextRunAt,
       leave_time: schedule.leaveTime,
+      random_name_enabled: schedule.randomNameEnabled,
       bot_count: schedule.botCount,
       bot_names: schedule.botNames,
       bot_slots: schedule.botSlots,
@@ -444,6 +445,7 @@ export function createSupabaseStoreAdapter(
               : null,
           leaveTime:
             typeof schedule.leave_time === "string" ? schedule.leave_time : null,
+          randomNameEnabled: schedule.random_name_enabled === true,
           botCount: Number(schedule.bot_count ?? 1),
           botNames: normalizeJsonArray(schedule.bot_names),
           botSlots:

@@ -20,6 +20,7 @@ import { getStorageDriver } from "@/lib/storage/config";
 import { createSupabaseServiceRoleClient } from "@/lib/storage/supabase-store";
 import { getSessionOperationBlockedMessage, isSessionActiveForOperations } from "@/lib/session-operations";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
+import { getRandomBotNames } from "@/lib/random-bot-names";
 import type {
   MeetingSession,
   MeetingSessionStatus,
@@ -775,6 +776,7 @@ function migrateScheduledBotJoin(
       rawScheduledBotJoin.leaveTime,
       scheduledAt,
     ),
+    randomNameEnabled: rawScheduledBotJoin.randomNameEnabled === true,
     botCount,
     botNames:
       botNames.length === botCount
@@ -2008,6 +2010,7 @@ function ensureScheduledBotJoinInput(input: {
   repeatEnabled?: boolean;
   repeatWeekdays?: string[];
   leaveTime?: string | null;
+  randomNameEnabled?: boolean;
 }): {
   name: string;
   scheduledAt: string;
@@ -2018,6 +2021,7 @@ function ensureScheduledBotJoinInput(input: {
   repeatEnabled: boolean;
   repeatWeekdays: string[];
   leaveTime: string;
+  randomNameEnabled: boolean;
 } {
   const name = input.name.trim();
   const transcriptLanguage = FIXED_TRANSCRIPT_LANGUAGE;
@@ -2070,6 +2074,7 @@ function ensureScheduledBotJoinInput(input: {
     repeatEnabled,
     repeatWeekdays,
     leaveTime,
+    randomNameEnabled: input.randomNameEnabled === true,
   };
 }
 
@@ -2761,6 +2766,7 @@ export async function createScheduledBotJoin(input: {
   repeatEnabled?: boolean;
   repeatWeekdays?: string[];
   leaveTime?: string | null;
+  randomNameEnabled?: boolean;
 }): Promise<ScheduledBotJoin> {
   return mutateStore(async (store) => {
     const requestedSessionId = normalizeSessionIdInput(input.sessionId);
@@ -2789,6 +2795,7 @@ export async function createScheduledBotJoin(input: {
       repeatEnabled: input.repeatEnabled,
       repeatWeekdays: input.repeatWeekdays,
       leaveTime: input.leaveTime,
+      randomNameEnabled: input.randomNameEnabled,
     });
     const now = new Date().toISOString();
     const scheduledBotJoin: ScheduledBotJoin = {
@@ -2806,6 +2813,7 @@ export async function createScheduledBotJoin(input: {
           )
         : null,
       leaveTime: normalizedInput.leaveTime,
+      randomNameEnabled: normalizedInput.randomNameEnabled,
       botCount: normalizedInput.botCount,
       botNames: normalizedInput.botNames,
       botSlots: buildScheduledBotSlots(normalizedInput.botNames),
@@ -2836,6 +2844,7 @@ export async function updateScheduledBotJoin(
     repeatEnabled?: boolean;
     repeatWeekdays?: string[];
     leaveTime?: string | null;
+    randomNameEnabled?: boolean;
     status?: ScheduledBotJoinStatus;
   },
 ): Promise<ScheduledBotJoin> {
@@ -2886,6 +2895,8 @@ export async function updateScheduledBotJoin(
       repeatEnabled: input.repeatEnabled ?? scheduledBotJoin.repeatEnabled,
       repeatWeekdays: input.repeatWeekdays ?? scheduledBotJoin.repeatWeekdays,
       leaveTime: input.leaveTime ?? scheduledBotJoin.leaveTime,
+      randomNameEnabled:
+        input.randomNameEnabled ?? scheduledBotJoin.randomNameEnabled,
     });
 
     const shouldResetExecutionState =
@@ -2905,6 +2916,7 @@ export async function updateScheduledBotJoin(
     scheduledBotJoin.repeatEnabled = normalizedInput.repeatEnabled;
     scheduledBotJoin.repeatWeekdays = normalizedInput.repeatWeekdays;
     scheduledBotJoin.leaveTime = normalizedInput.leaveTime;
+    scheduledBotJoin.randomNameEnabled = normalizedInput.randomNameEnabled;
     if (!normalizedInput.repeatEnabled) {
       scheduledBotJoin.nextRunAt = null;
     } else if (shouldResetExecutionState || !scheduledBotJoin.nextRunAt) {
@@ -6455,10 +6467,17 @@ export async function runDueScheduledBotJoins(): Promise<{
         existingSlots: scheduledBotJoin.botSlots,
         resetCreatedRecallBotIds: true,
       });
+      const occurrenceBotNames = scheduledBotJoin.randomNameEnabled
+        ? getRandomBotNames(scheduledBotJoin.botSlots.length)
+        : scheduledBotJoin.botSlots.map((slot) => slot.botName);
 
       for (let index = 0; index < scheduledBotJoin.botSlots.length; index += 1) {
         const botSlot = scheduledBotJoin.botSlots[index];
-        const botName = botSlot?.botName ?? scheduledBotJoin.botNames[index];
+        const botName = occurrenceBotNames[index] ?? botSlot?.botName ?? scheduledBotJoin.botNames[index];
+
+        if (botSlot) {
+          botSlot.botName = botName;
+        }
 
         try {
           const createRequestPayload = buildCreateRecallBotPayload({

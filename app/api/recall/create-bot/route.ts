@@ -10,6 +10,7 @@ import {
   saveRecallBotRecord,
 } from "@/lib/store";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
+import { getRandomBotNames } from "@/lib/random-bot-names";
 import type { RecallBotRecord } from "@/lib/types";
 
 const DEFAULT_BOT_NAME = "ChatsHero AI Assistant";
@@ -125,6 +126,7 @@ export async function POST(request: Request) {
       botNames?: string[];
       botCount?: number | string;
       leaveAt?: string | null;
+      randomNameEnabled?: boolean;
     };
 
     const sessionId = String(body.sessionId ?? "").trim();
@@ -165,7 +167,9 @@ export async function POST(request: Request) {
       DEFAULT_BOT_NAME;
     const transcriptLanguage = "";
     const botCount = ensureValidBotCount(body.botCount);
-    const botNames = ensureValidBotNames(body.botNames, botNamePrefix, botCount);
+    const botNames = body.randomNameEnabled === true
+      ? getRandomBotNames(botCount)
+      : ensureValidBotNames(body.botNames, botNamePrefix, botCount);
     const leaveAt = resolveManualLeaveAt(body.leaveAt);
 
     if (botCount === 1) {
