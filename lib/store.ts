@@ -47,6 +47,7 @@ import type {
   TranscriptLog,
   TriggerRule,
   WebhookDebugLog,
+  ErrorLog,
 } from "@/lib/types";
 export const DEFAULT_SESSION_ID = "default-session";
 export const DEFAULT_SESSION_NAME = "Default Session";
@@ -90,6 +91,7 @@ export const emptyStore: StoreData = {
   liveChatLogs: [],
   liveChatRoundRobinIndex: 0,
   webhookDebugLogs: [],
+  errorLogs: [],
 };
 
 export const storeCorruptionRecoveryError =
@@ -148,6 +150,7 @@ type LegacyTimerTrigger = Partial<TimerTrigger>;
 type LegacyTimerTriggerLog = Partial<TimerTriggerLog>;
 type LegacyLiveChatTemplate = Partial<LiveChatTemplate>;
 type LegacyLiveChatLog = Partial<LiveChatLog>;
+type LegacyErrorLog = Partial<ErrorLog>;
 
 type PaginationOptions = {
   page?: number;
@@ -247,6 +250,7 @@ export function normalizeStoreData(
     timerTriggerLogs?: LegacyTimerTriggerLog[];
     liveChatTemplates?: LegacyLiveChatTemplate[];
     liveChatLogs?: LegacyLiveChatLog[];
+    errorLogs?: LegacyErrorLog[];
   };
 
   let meetingSessions = (parsed.meetingSessions ?? []).map(migrateMeetingSession);
@@ -335,6 +339,19 @@ export function normalizeStoreData(
           : null,
       errorMessage:
         typeof rawLog.errorMessage === "string" ? rawLog.errorMessage : null,
+    })),
+    errorLogs: (parsed.errorLogs ?? []).map((rawLog) => ({
+      id: String(rawLog.id ?? randomUUID()),
+      sessionId:
+        typeof rawLog.sessionId === "string" && validSessionIds.has(rawLog.sessionId)
+          ? rawLog.sessionId
+          : null,
+      source: String(rawLog.source ?? "server").trim() || "server",
+      message: String(rawLog.message ?? "Unknown error.").trim() || "Unknown error.",
+      createdAt:
+        typeof rawLog.createdAt === "string"
+          ? rawLog.createdAt
+          : new Date().toISOString(),
     })),
   };
 }
@@ -1937,6 +1954,10 @@ function sortTimerTriggerLogs(timerTriggerLogs: TimerTriggerLog[]): TimerTrigger
 
 function sortLiveChatLogs(liveChatLogs: LiveChatLog[]): LiveChatLog[] {
   return [...liveChatLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function sortErrorLogs(errorLogs: ErrorLog[]): ErrorLog[] {
+  return [...errorLogs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 function sortLiveChatTemplates(
@@ -3895,6 +3916,61 @@ export async function clearLiveChatLogs(sessionId?: string): Promise<void> {
   await mutateStore(async (store) => {
     store.liveChatLogs = store.liveChatLogs.filter(
       (log) => !matchesSessionId(log.sessionId, sessionId),
+    );
+  });
+}
+
+export async function recordErrorLog(input: {
+  sessionId?: string | null;
+  source: string;
+  message: string;
+}): Promise<void> {
+  await mutateStore(async (store) => {
+    store.errorLogs.unshift({
+      id: randomUUID(),
+      sessionId:
+        input.sessionId && findMeetingSessionById(store, input.sessionId)
+          ? input.sessionId
+          : null,
+      source: input.source.trim() || "server",
+      message: input.message.trim() || "Unknown error.",
+      createdAt: new Date().toISOString(),
+    });
+    store.errorLogs = store.errorLogs.slice(0, 500);
+  });
+}
+
+export async function listErrorLogs(options?: {
+  sessionId?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<PaginatedResult<ErrorLog>> {
+  const store = await readStore();
+  return paginateItems(
+    sortErrorLogs(store.errorLogs).filter(
+      (log) =>
+        !options?.sessionId ||
+        log.sessionId === options.sessionId ||
+        log.sessionId === null,
+    ),
+    options,
+  );
+}
+
+export async function deleteErrorLog(id: string): Promise<void> {
+  await mutateStore(async (store) => {
+    const initialCount = store.errorLogs.length;
+    store.errorLogs = store.errorLogs.filter((log) => log.id !== id);
+    if (store.errorLogs.length === initialCount) {
+      throw new Error("Error log not found.");
+    }
+  });
+}
+
+export async function clearErrorLogs(sessionId?: string): Promise<void> {
+  await mutateStore(async (store) => {
+    store.errorLogs = store.errorLogs.filter(
+      (log) => !sessionId || log.sessionId !== sessionId,
     );
   });
 }

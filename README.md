@@ -238,6 +238,11 @@ Behavior:
 - The protected `GET /api/scheduled-bots/run-due` cron route processes scheduled bot joins, scheduled live chat, then due bot auto-leaves.
 - Auto-leave uses Recall's `leave_call` endpoint. A completed or failed auto-leave is recorded on the bot and is not retried automatically.
 
+## Error Logs
+
+- `/error-logs` shows recorded server errors for the current session.
+- Deleting one log or clearing the current session's logs requires `ERROR_LOG_DELETE_PASSWORD`; it defaults to `Chatshero` if the environment variable is not set.
+
 ## Recall Send Chat Modes
 
 ### Dry-run mode

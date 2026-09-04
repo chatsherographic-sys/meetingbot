@@ -4,6 +4,7 @@ import {
   runDueBotAutoLeaves,
   runDueScheduledLiveChatTemplates,
 } from "@/lib/store";
+import { recordErrorLogSafely } from "@/lib/error-log";
 
 function isAuthorizedCronRequest(request: Request): boolean {
   const cronSecret = process.env.CRON_SECRET?.trim();
@@ -52,6 +53,7 @@ export async function GET(request: Request) {
         ? error.message
         : "Failed to run due scheduled bot joins.";
 
+    await recordErrorLogSafely({ source: "Scheduled cron runner", error });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

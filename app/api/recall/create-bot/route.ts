@@ -11,6 +11,7 @@ import {
 } from "@/lib/store";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
 import { getRandomBotNames } from "@/lib/random-bot-names";
+import { recordErrorLogSafely } from "@/lib/error-log";
 import type { RecallBotRecord } from "@/lib/types";
 
 const DEFAULT_BOT_NAME = "ChatsHero AI Assistant";
@@ -117,6 +118,7 @@ function resolveManualLeaveAt(value: unknown): string | null {
 }
 
 export async function POST(request: Request) {
+  let sessionId: string | null = null;
   try {
     const body = (await request.json()) as {
       sessionId?: string;
@@ -129,7 +131,7 @@ export async function POST(request: Request) {
       randomNameEnabled?: boolean;
     };
 
-    const sessionId = String(body.sessionId ?? "").trim();
+    sessionId = String(body.sessionId ?? "").trim();
 
     if (!sessionId) {
       throw new Error("Session ID is required.");
@@ -271,6 +273,7 @@ export async function POST(request: Request) {
     const message =
       error instanceof Error ? error.message : "Failed to create Recall bot.";
 
+    await recordErrorLogSafely({ source: "Create bot", error, sessionId });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

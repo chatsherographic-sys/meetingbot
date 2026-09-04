@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createScheduledBotJoin, listScheduledBotJoins } from "@/lib/store";
 import { FIXED_TRANSCRIPT_LANGUAGE } from "@/lib/transcript-language";
+import { recordErrorLogSafely } from "@/lib/error-log";
 
 function parsePositiveInteger(value: string | null): number | undefined {
   if (!value) {
@@ -31,6 +32,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  let sessionId: string | null = null;
   try {
     const body = (await request.json()) as {
       sessionId?: string;
@@ -45,8 +47,9 @@ export async function POST(request: Request) {
       randomNameEnabled?: boolean;
     };
 
+    sessionId = body.sessionId?.trim() || null;
     const scheduledBotJoin = await createScheduledBotJoin({
-      sessionId: body.sessionId ?? "",
+      sessionId: sessionId ?? "",
       name: body.name ?? "",
       scheduledAt: body.scheduledAt ?? "",
       botCount: Number(body.botCount ?? 1),
@@ -68,6 +71,7 @@ export async function POST(request: Request) {
         ? error.message
         : "Failed to create scheduled bot join.";
 
+    await recordErrorLogSafely({ source: "Create scheduled bot join", error, sessionId });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

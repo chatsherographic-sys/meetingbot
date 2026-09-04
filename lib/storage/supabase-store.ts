@@ -257,6 +257,13 @@ function mapStoreToRows(store: StoreData) {
       created_at: template.createdAt,
       updated_at: template.updatedAt,
     })),
+    error_logs: store.errorLogs.map((log) => ({
+      id: log.id,
+      session_id: log.sessionId,
+      source: log.source,
+      message: log.message,
+      created_at: log.createdAt,
+    })),
   };
 }
 
@@ -268,6 +275,7 @@ async function fetchAllTableData(client: SupabaseClient) {
     scheduledBotJoinsResult,
     liveChatLogsResult,
     liveChatTemplatesResult,
+    errorLogsResult,
   ] = await Promise.all([
     client.from("settings").select("*").eq("id", SETTINGS_ROW_ID).maybeSingle(),
     client.from("meeting_sessions").select("*"),
@@ -275,6 +283,7 @@ async function fetchAllTableData(client: SupabaseClient) {
     client.from("scheduled_bot_joins").select("*"),
     client.from("live_chat_logs").select("*"),
     client.from("live_chat_templates").select("*"),
+    client.from("error_logs").select("*"),
   ]);
 
   const results = [
@@ -284,6 +293,7 @@ async function fetchAllTableData(client: SupabaseClient) {
     scheduledBotJoinsResult,
     liveChatLogsResult,
     liveChatTemplatesResult,
+    errorLogsResult,
   ];
 
   const failedResult = results.find((result) => result.error);
@@ -299,6 +309,7 @@ async function fetchAllTableData(client: SupabaseClient) {
     scheduledBotJoins: scheduledBotJoinsResult.data ?? [],
     liveChatLogs: liveChatLogsResult.data ?? [],
     liveChatTemplates: liveChatTemplatesResult.data ?? [],
+    errorLogs: errorLogsResult.data ?? [],
   };
 }
 
@@ -608,6 +619,13 @@ export function createSupabaseStoreAdapter(
           createdAt: String(template.created_at ?? new Date().toISOString()),
           updatedAt: String(template.updated_at ?? new Date().toISOString()),
         })),
+        errorLogs: data.errorLogs.map((log) => ({
+          id: String(log.id),
+          sessionId: typeof log.session_id === "string" ? log.session_id : null,
+          source: String(log.source ?? "server"),
+          message: String(log.message ?? "Unknown error."),
+          createdAt: String(log.created_at ?? new Date().toISOString()),
+        })),
         webhookDebugLogs: [],
         transcriptLogs: [],
       });
@@ -629,6 +647,7 @@ export function createSupabaseStoreAdapter(
       await syncTable(client, "scheduled_bot_joins", rows.scheduled_bot_joins);
       await syncTable(client, "live_chat_logs", rows.live_chat_logs);
       await syncTable(client, "live_chat_templates", rows.live_chat_templates);
+      await syncTable(client, "error_logs", rows.error_logs);
     },
   };
 }

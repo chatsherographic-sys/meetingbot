@@ -307,6 +307,14 @@ export type WebhookDebugLog = {
   errorMessage: string | null;
 };
 
+export type ErrorLog = {
+  id: string;
+  sessionId: string | null;
+  source: string;
+  message: string;
+  createdAt: string;
+};
+
 export type StoreData = {
   storageLoggingMode: StorageLoggingMode;
   meetingSessions: MeetingSession[];
@@ -321,6 +329,7 @@ export type StoreData = {
   liveChatLogs: LiveChatLog[];
   liveChatRoundRobinIndex: number;
   webhookDebugLogs: WebhookDebugLog[];
+  errorLogs: ErrorLog[];
 };
 
 export type PaginationMeta = {

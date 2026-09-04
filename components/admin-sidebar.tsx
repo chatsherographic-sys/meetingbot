@@ -10,6 +10,7 @@ const navItems = [
   { href: "/bots", label: "Bots" },
   { href: "/scheduled-bots", label: "Scheduled Bots" },
   { href: "/live-chat", label: "Live Chat" },
+  { href: "/error-logs", label: "Error Logs" },
   { href: "/settings", label: "Settings" },
 ];
 

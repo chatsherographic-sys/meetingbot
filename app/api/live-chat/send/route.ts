@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { sendLiveChat } from "@/lib/store";
+import { recordErrorLogSafely } from "@/lib/error-log";
 import type { SenderMode } from "@/lib/types";
 
 export async function POST(request: Request) {
+  let sessionId: string | null = null;
   try {
     const body = (await request.json()) as {
       sessionId?: string;
@@ -11,8 +13,9 @@ export async function POST(request: Request) {
       senderBotIds?: string[];
     };
 
+    sessionId = body.sessionId?.trim() || null;
     const liveChatLog = await sendLiveChat({
-      sessionId: body.sessionId ?? "",
+      sessionId: sessionId ?? "",
       message: body.message ?? "",
       senderMode:
         body.senderMode === "specific_bots" ||
@@ -28,6 +31,7 @@ export async function POST(request: Request) {
     const message =
       error instanceof Error ? error.message : "Failed to send live chat.";
 
+    await recordErrorLogSafely({ source: "Live chat send", error, sessionId });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
